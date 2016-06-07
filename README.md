@@ -1,3 +1,3 @@
 # WISB256-Eindopdracht
 
-Symbolische Manipulatie
+‘Symbolische Manipulatie’ als eindopdracht voor WISB256 Universiteit Utrecht door Joost Franssen
