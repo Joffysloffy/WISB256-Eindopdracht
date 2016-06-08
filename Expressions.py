@@ -55,12 +55,41 @@ class Expression:
      - __eq__(other): tree-equality, check if other represents the same expression tree.
     """
 
+    OPERATOR_LIST = {"Addition": "+",
+                     "Subtraction": "-",
+                     "Multiplication": "*",
+                     "Division": "/",
+                     "Power": "**"}
+    OPERATOR_SYMBOLS = list(OPERATOR_LIST.values())
+    LEFT_ASSOCIATIVITY = {"+": True,
+                          "-": True,
+                          "*": True,
+                          "/": True,
+                          "**": False}
+    PRECEDENCE = {"+": 0,
+                  "-": 0,
+                  "*": 1,
+                  "/": 1,
+                  "**": 2}
+
     # TODO: when adding new methods that should be supported by all subclasses, add them to this list
 
     # operator overloading:
     # this allows us to perform 'arithmetic' with expressions, and obtain another expression
     def __add__(self, other):
-        return AddNode(self, other)
+        return AdditionNode(self, other)
+
+    def __sub__(self, other):
+        return SubtractionNode(self, other)
+
+    def __mul__(self, other):
+        return MultiplicationNode(self, other)
+
+    def __truediv__(self, other):
+        return DivisionNode(self, other)
+
+    def __pow__(self, other):
+        return PowerNode(self, other)
 
     # TODO: other overloads, such as __sub__, __mul__, etc.
 
@@ -77,7 +106,7 @@ class Expression:
         output = []
 
         # list of operators
-        oplist = ["+"]
+        oplist = Expression.OPERATOR_SYMBOLS
 
         for token in tokens:
             if is_number(token):
@@ -88,19 +117,19 @@ class Expression:
                     output.append(Constant(float(token)))
             elif token in oplist:
                 # pop operators from the stack to the output until the top is no longer an operator
-                while True:
-                    # TODO: when there are more operators, the rules are more complicated
-                    # look up the shunting yard-algorithm
-                    if len(stack) == 0 or stack[-1] not in oplist:
+                while len(stack) > 0 and stack[-1] in oplist:
+                    if (Expression.LEFT_ASSOCIATIVITY[token] and Expression.PRECEDENCE[token] <= Expression.PRECEDENCE[stack[-1]]) or\
+                       (not Expression.LEFT_ASSOCIATIVITY and Expression.PRECEDENCE[token] < Expression.PRECEDENCE[stack[-1]]):
+                        output.append(stack.pop())
+                    else:
                         break
-                    output.append(stack.pop())
                 # push the new operator onto the stack
                 stack.append(token)
             elif token == "(":
                 # left parentheses go to the stack
                 stack.append(token)
             elif token == ")":
-                # right parenthesis: pop everything upto the last left parenthesis to the output
+                # right parenthesis: pop everything up to the last left parenthesis to the output
                 while not stack[-1] == "(":
                     output.append(stack.pop())
                 # pop the left parenthesis from the stack (but not to the output)
@@ -151,13 +180,22 @@ class Constant(Expression):
         return float(self.value)
 
 
-class BinaryNode(Expression):
+class OperatorNode(Expression):
+    """A node in the expression tree representing an operator"""
+
+    def __init__(self, op_symbol: str, is_left_associative: bool, precedence: int):
+        self.is_left_associative = is_left_associative
+        self.precedence = precedence
+        self.op_symbol = op_symbol
+
+
+class BinaryNode(OperatorNode):
     """A node in the expression tree representing a binary operator."""
 
     def __init__(self, lhs, rhs, op_symbol):
+        super().__init__(op_symbol, Expression.LEFT_ASSOCIATIVITY[op_symbol], Expression.PRECEDENCE[op_symbol])
         self.lhs = lhs
         self.rhs = rhs
-        self.op_symbol = op_symbol
 
     # TODO: what other properties could you need? Precedence, associativity, identity, etc.
 
@@ -175,10 +213,39 @@ class BinaryNode(Expression):
         return "(%s %s %s)" % (lstring, self.op_symbol, rstring)
 
 
-class AddNode(BinaryNode):
+class AdditionNode(BinaryNode):
     """Represents the addition operator"""
 
     def __init__(self, lhs, rhs):
-        super(AddNode, self).__init__(lhs, rhs, "+")
+        super().__init__(lhs, rhs, Expression.OPERATOR_LIST["Addition"])
 
-        # TODO: add more subclasses of Expression to represent operators, variables, functions, etc.
+
+class SubtractionNode(BinaryNode):
+    """Represents the subtraction operator"""
+
+    def __init__(self, lhs, rhs):
+        super().__init__(lhs, rhs, Expression.OPERATOR_LIST["Subtraction"])
+
+
+class MultiplicationNode(BinaryNode):
+    """Represents the multiplication operator"""
+
+    def __init__(self, lhs, rhs):
+        super().__init__(lhs, rhs, Expression.OPERATOR_LIST["Multiplication"])
+
+
+class DivisionNode(BinaryNode):
+    """Represents the division operator"""
+
+    def __init__(self, lhs, rhs):
+        super().__init__(lhs, rhs, Expression.OPERATOR_LIST["Division"])
+
+
+class PowerNode(BinaryNode):
+    """Represents the power operator"""
+
+    def __init__(self, lhs, rhs):
+        super().__init__(lhs, rhs, Expression.OPERATOR_LIST["Power"])
+
+
+# TODO: add more subclasses of Expression to represent operators, variables, functions, etc.
