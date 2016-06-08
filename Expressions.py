@@ -54,6 +54,7 @@ class Expression:
     Any concrete subclass of Expression should have these methods:
      - __str__(): return a string representation of the Expression.
      - __eq__(other): tree-equality, check if other represents the same expression tree.
+     - evaluate(variable_values: dict): evaluates the expression with values specified for the variables
     """
 
     # central list of properties of the operators
@@ -136,6 +137,9 @@ class Expression:
                 # pop the left parenthesis from the stack (but not to the output)
                 stack.pop()
             # TODO: do we need more kinds of tokens?
+            elif len(token) == 1:
+                # unknown token of 1 character is presumed to be a variable
+                output.append(Variable(token))
             else:
                 # unknown token
                 raise ValueError("Unknown token: %s" % token)
@@ -157,6 +161,9 @@ class Expression:
         # the resulting expression tree is what's left on the stack
         return stack[0]
 
+    def evaluate(self, variable_values: dict):
+        pass
+
 
 class Constant(Expression):
     """Represents a constant value"""
@@ -173,12 +180,34 @@ class Constant(Expression):
     def __str__(self):
         return str(self.value)
 
+    def evaluate(self, variable_values: dict):
+        return self.value
+
     # allow conversion to numerical values
     def __int__(self):
         return int(self.value)
 
     def __float__(self):
         return float(self.value)
+
+
+class Variable(Expression):
+    """Represents a variable that may later be substituted for a value"""
+
+    def __init__(self, symbol):
+        self.symbol = symbol
+
+    def __eq__(self, other):
+        if isinstance(other, Variable):
+            return self.symbol == other.symbol
+        else:
+            return False
+
+    def __str__(self):
+        return self.symbol
+
+    def evaluate(self, variable_values: dict):
+        return variable_values[self.symbol]
 
 
 class OperatorNode(Expression):
@@ -194,7 +223,7 @@ class OperatorNode(Expression):
 class BinaryNode(OperatorNode):
     """A node in the expression tree representing a binary operator."""
 
-    def __init__(self, lhs, rhs, op_symbol):
+    def __init__(self, lhs: Expression, rhs: Expression, op_symbol):
         super().__init__(op_symbol, Expression.ASSOCIATIVITY[op_symbol].left, Expression.ASSOCIATIVITY[op_symbol].right, Expression.PRECEDENCE[op_symbol])
         self.lhs = lhs
         self.rhs = rhs
@@ -219,6 +248,11 @@ class BinaryNode(OperatorNode):
                (self.rhs.precedence == self.precedence and not self.rhs.is_right_associative):
                 rstring = "(%s)" % rstring
         return "%s %s %s" % (lstring, self.op_symbol, rstring)
+
+    def evaluate(self, variable_values: dict):
+        lvalue = self.lhs.evaluate(variable_values)
+        rvalue = self.rhs.evaluate(variable_values)
+        return eval((str(lvalue) + "%s" + str(rvalue)) % self.op_symbol)
 
 
 class AdditionNode(BinaryNode):
