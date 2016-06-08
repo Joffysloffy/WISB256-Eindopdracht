@@ -1,4 +1,5 @@
 import math
+from collections import namedtuple
 
 
 # split a string into mathematical tokens
@@ -55,22 +56,19 @@ class Expression:
      - __eq__(other): tree-equality, check if other represents the same expression tree.
     """
 
+    # central list of properties of the operators
     OPERATOR_LIST = {"Addition": "+",
                      "Subtraction": "-",
                      "Multiplication": "*",
                      "Division": "/",
                      "Power": "**"}
     OPERATOR_SYMBOLS = list(OPERATOR_LIST.values())
-    LEFT_ASSOCIATIVITY = {"+": True,
-                          "-": True,
-                          "*": True,
-                          "/": True,
-                          "**": False}
-    RIGHT_ASSOCIATIVITY = {"+": True,
-                           "-": False,
-                           "*": True,
-                           "/": False,
-                           "**": True}
+    associativity = namedtuple("associativity", "left right")
+    ASSOCIATIVITY = {"+": associativity(left=True, right=True),
+                     "-": associativity(left=True, right=False),
+                     "*": associativity(left=True, right=True),
+                     "/": associativity(left=True, right=False),
+                     "**": associativity(left=False, right=True)}
     PRECEDENCE = {"+": 0,
                   "-": 0,
                   "*": 1,
@@ -121,8 +119,8 @@ class Expression:
             elif token in oplist:
                 # pop operators from the stack to the output until the top is no longer an operator
                 while len(stack) > 0 and stack[-1] in oplist:
-                    if (Expression.LEFT_ASSOCIATIVITY[token] and Expression.PRECEDENCE[token] <= Expression.PRECEDENCE[stack[-1]]) or\
-                       (Expression.RIGHT_ASSOCIATIVITY[token] and Expression.PRECEDENCE[token] < Expression.PRECEDENCE[stack[-1]]):
+                    if (Expression.ASSOCIATIVITY[token].left and Expression.PRECEDENCE[token] <= Expression.PRECEDENCE[stack[-1]]) or\
+                       (Expression.ASSOCIATIVITY[token].right and Expression.PRECEDENCE[token] < Expression.PRECEDENCE[stack[-1]]):
                         output.append(stack.pop())
                     else:
                         break
@@ -184,7 +182,7 @@ class Constant(Expression):
 
 
 class OperatorNode(Expression):
-    """A node in the expression tree representing an operator"""
+    """The base for an Operator in a node."""
 
     def __init__(self, op_symbol: str, is_left_associative: bool, is_right_associative: bool, precedence: int):
         self.is_left_associative = is_left_associative
@@ -197,7 +195,7 @@ class BinaryNode(OperatorNode):
     """A node in the expression tree representing a binary operator."""
 
     def __init__(self, lhs, rhs, op_symbol):
-        super().__init__(op_symbol, Expression.LEFT_ASSOCIATIVITY[op_symbol], Expression.RIGHT_ASSOCIATIVITY[op_symbol], Expression.PRECEDENCE[op_symbol])
+        super().__init__(op_symbol, Expression.ASSOCIATIVITY[op_symbol].left, Expression.ASSOCIATIVITY[op_symbol].right, Expression.PRECEDENCE[op_symbol])
         self.lhs = lhs
         self.rhs = rhs
 
@@ -212,7 +210,6 @@ class BinaryNode(OperatorNode):
         rstring = str(self.rhs)
 
         # TODO: do we always need parentheses?
-        # return "(%s %s %s)" % (lstring, self.op_symbol, rstring)
         if isinstance(self.lhs, BinaryNode):
             if self.lhs.precedence < self.precedence or\
                (self.lhs.precedence == self.precedence and not self.lhs.is_left_associative):
