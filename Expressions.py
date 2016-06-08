@@ -66,6 +66,11 @@ class Expression:
                           "*": True,
                           "/": True,
                           "**": False}
+    RIGHT_ASSOCIATIVITY = {"+": True,
+                           "-": False,
+                           "*": True,
+                           "/": False,
+                           "**": True}
     PRECEDENCE = {"+": 0,
                   "-": 0,
                   "*": 1,
@@ -90,8 +95,6 @@ class Expression:
 
     def __pow__(self, other):
         return PowerNode(self, other)
-
-    # TODO: other overloads, such as __sub__, __mul__, etc.
 
     # basic Shunting-yard algorithm
     @staticmethod
@@ -119,7 +122,7 @@ class Expression:
                 # pop operators from the stack to the output until the top is no longer an operator
                 while len(stack) > 0 and stack[-1] in oplist:
                     if (Expression.LEFT_ASSOCIATIVITY[token] and Expression.PRECEDENCE[token] <= Expression.PRECEDENCE[stack[-1]]) or\
-                       (not Expression.LEFT_ASSOCIATIVITY and Expression.PRECEDENCE[token] < Expression.PRECEDENCE[stack[-1]]):
+                       (Expression.RIGHT_ASSOCIATIVITY[token] and Expression.PRECEDENCE[token] < Expression.PRECEDENCE[stack[-1]]):
                         output.append(stack.pop())
                     else:
                         break
@@ -183,8 +186,9 @@ class Constant(Expression):
 class OperatorNode(Expression):
     """A node in the expression tree representing an operator"""
 
-    def __init__(self, op_symbol: str, is_left_associative: bool, precedence: int):
+    def __init__(self, op_symbol: str, is_left_associative: bool, is_right_associative: bool, precedence: int):
         self.is_left_associative = is_left_associative
+        self.is_right_associative = is_right_associative
         self.precedence = precedence
         self.op_symbol = op_symbol
 
@@ -193,11 +197,9 @@ class BinaryNode(OperatorNode):
     """A node in the expression tree representing a binary operator."""
 
     def __init__(self, lhs, rhs, op_symbol):
-        super().__init__(op_symbol, Expression.LEFT_ASSOCIATIVITY[op_symbol], Expression.PRECEDENCE[op_symbol])
+        super().__init__(op_symbol, Expression.LEFT_ASSOCIATIVITY[op_symbol], Expression.RIGHT_ASSOCIATIVITY[op_symbol], Expression.PRECEDENCE[op_symbol])
         self.lhs = lhs
         self.rhs = rhs
-
-    # TODO: what other properties could you need? Precedence, associativity, identity, etc.
 
     def __eq__(self, other):
         if type(self) == type(other):
@@ -210,7 +212,16 @@ class BinaryNode(OperatorNode):
         rstring = str(self.rhs)
 
         # TODO: do we always need parentheses?
-        return "(%s %s %s)" % (lstring, self.op_symbol, rstring)
+        # return "(%s %s %s)" % (lstring, self.op_symbol, rstring)
+        if isinstance(self.lhs, BinaryNode):
+            if self.lhs.precedence < self.precedence or\
+               (self.lhs.precedence == self.precedence and not self.lhs.is_left_associative):
+                lstring = "(%s)" % lstring
+        if isinstance(self.rhs, BinaryNode):
+            if self.rhs.precedence < self.precedence or\
+               (self.rhs.precedence == self.precedence and not self.rhs.is_right_associative):
+                rstring = "(%s)" % rstring
+        return "%s %s %s" % (lstring, self.op_symbol, rstring)
 
 
 class AdditionNode(BinaryNode):
@@ -248,4 +259,3 @@ class PowerNode(BinaryNode):
         super().__init__(lhs, rhs, Expression.OPERATOR_LIST["Power"])
 
 
-# TODO: add more subclasses of Expression to represent operators, variables, functions, etc.
