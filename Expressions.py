@@ -19,11 +19,23 @@ def tokenize(string):
     # split on spaces - this gives us our tokens
     tokens = tokenstring.split()
 
-    # special casing for **:
+    # special casing for ** and negation:
     ans = []
     for t in tokens:
-        if len(ans) > 0 and t == ans[-1] == "*":
-            ans[-1] = "**"
+        if len(ans) > 0:
+            # handle power **
+            if t == ans[-1] == "*":
+                ans[-1] = "**"
+                continue
+
+            # convert negation - to ~
+            if t == "-":
+                if ans[-1] in Expression.OPERATOR_SYMBOLS + ["(", ","]:
+                    ans.append("~")
+                    continue
+            ans.append(t)
+        elif t == "-":
+            ans.append("~")
         else:
             ans.append(t)
     return ans
@@ -62,19 +74,23 @@ class Expression:
                      "Subtraction": "-",
                      "Multiplication": "*",
                      "Division": "/",
-                     "Power": "**"}
+                     "Power": "**",
+                     "Negation": "~"}
     OPERATOR_SYMBOLS = list(OPERATOR_LIST.values())
+    UNARY_OPERATOR_SYMBOLS = ["~"]
     associativity = namedtuple("associativity", "left right")
     ASSOCIATIVITY = {"+": associativity(left=True, right=True),
                      "-": associativity(left=True, right=False),
                      "*": associativity(left=True, right=True),
                      "/": associativity(left=True, right=False),
-                     "**": associativity(left=False, right=True)}
+                     "**": associativity(left=False, right=True),
+                     "~": associativity(left=False, right=True)}
     PRECEDENCE = {"+": 0,
                   "-": 0,
                   "*": 1,
                   "/": 1,
-                  "**": 2}
+                  "**": 2,
+                  "~": 2}
     FUNCTION_END_TOKEN = "@"
 
     # TODO: when adding new methods that should be supported by all subclasses, add them to this list
@@ -96,12 +112,14 @@ class Expression:
     def __pow__(self, other):
         return PowerNode(self, other)
 
+    def __invert__(self):
+        return NegationNode(self)
+
     # basic Shunting-yard algorithm
     @staticmethod
     def from_string(string):
         # split into tokens
         tokens = tokenize(string)
-
         # stack used by the Shunting-Yard algorithm
         stack = []
         # output of the algorithm: a list representing the formula in RPN
@@ -125,6 +143,7 @@ class Expression:
                 # to keep track of which arguments belong to the function
                 output.append(Expression.FUNCTION_END_TOKEN)
             elif token == ",":
+                # pop everything up to the left parenthesis to the output
                 while not stack[-1] == "(":
                     output.append(stack.pop())
             elif token in oplist:
@@ -165,7 +184,11 @@ class Expression:
 
         # convert RPN to an actual expression tree
         for t in output:
-            if t in oplist:
+            if t in Expression.UNARY_OPERATOR_SYMBOLS:
+                # first handle the unary operators
+                x = stack.pop()
+                stack.append(eval("%sx" % t))
+            elif t in oplist:
                 # let eval and operator overloading take care of figuring out what to do
                 y = stack.pop()
                 x = stack.pop()
@@ -297,6 +320,43 @@ class OperatorNode(Expression):
         self.op_symbol = op_symbol
 
 
+class UnaryNode(OperatorNode):
+    """A node in the expression tree representing a prefix unary operator"""
+
+    def __init__(self, operand: Expression, op_symbol):
+        super().__init__(op_symbol, Expression.ASSOCIATIVITY[op_symbol].left, Expression.ASSOCIATIVITY[op_symbol].right, Expression.PRECEDENCE[op_symbol])
+        self.operand = operand
+
+    def __eq__(self, other):
+        if type(self) == type(other):
+            return self.operand == other.operand
+        else:
+            return False
+
+    def __str__(self):
+        return self.op_symbol + str(self.operand)
+
+    def evaluate(self, substitutions_unknowns=dict()):
+        value = self.operand.evaluate(substitutions_unknowns)
+        return eval("%s%s" % (self.op_symbol, str(value)))
+
+
+class NegationNode(UnaryNode):
+    """Represents negation"""
+
+    def __init__(self, operand):
+        super().__init__(operand, Expression.OPERATOR_LIST["Negation"])
+
+    def __str__(self):
+        # use ‘-’ instead of ‘~’ when printing
+        return "-" + str(self.operand)
+
+    def evaluate(self, substitutions_unknowns=dict()):
+        print(Constant(0) - self.operand)
+        print((Constant(0) - self.operand).evaluate(substitutions_unknowns))
+        return (Constant(0) - self.operand).evaluate(substitutions_unknowns)
+
+
 class BinaryNode(OperatorNode):
     """A node in the expression tree representing a binary operator."""
 
@@ -316,11 +376,11 @@ class BinaryNode(OperatorNode):
         rstring = str(self.rhs)
 
         # TODO: do we always need parentheses?
-        if isinstance(self.lhs, BinaryNode):
+        if isinstance(self.lhs, OperatorNode):
             if self.lhs.precedence < self.precedence or\
                (self.lhs.precedence == self.precedence and not self.lhs.is_left_associative):
                 lstring = "(%s)" % lstring
-        if isinstance(self.rhs, BinaryNode):
+        if isinstance(self.rhs, OperatorNode):
             if self.rhs.precedence < self.precedence or\
                (self.rhs.precedence == self.precedence and not self.rhs.is_right_associative):
                 rstring = "(%s)" % rstring
@@ -329,7 +389,7 @@ class BinaryNode(OperatorNode):
     def evaluate(self, substitutions_unknowns=dict()):
         lvalue = self.lhs.evaluate(substitutions_unknowns)
         rvalue = self.rhs.evaluate(substitutions_unknowns)
-        return eval((str(lvalue) + "%s" + str(rvalue)) % self.op_symbol)
+        return eval("(%s) %s (%s)" % (lvalue, self.op_symbol, rvalue))
 
 
 class AdditionNode(BinaryNode):
@@ -367,3 +427,6 @@ class PowerNode(BinaryNode):
         super().__init__(lhs, rhs, Expression.OPERATOR_LIST["Power"])
 
 
+expr = Expression.from_string("3 * -(2 + 1)")
+print(expr)
+print(expr.evaluate())
