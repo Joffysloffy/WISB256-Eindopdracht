@@ -213,6 +213,13 @@ class Expression:
     def evaluate(self, substitutions_unknowns={}):
         pass
 
+    def derivative(self, variable):
+        pass
+
+    def __contains__(self, item):
+        if item == self:
+            return True
+
 
 class Constant(Expression):
     """Represents a constant value"""
@@ -231,6 +238,12 @@ class Constant(Expression):
 
     def evaluate(self, substitutions_unknowns={}):
         return self.value
+
+    def derivative(self, variable):
+        return Constant(0)
+
+    def __contains__(self, item):
+        return self == item
 
     # allow conversion to numerical values
     def __int__(self):
@@ -264,6 +277,15 @@ class Variable(Expression):
             return substitutions_unknowns[self.symbol]
         except KeyError:
             return Variable.BUILTIN_CONSTANTS[self.symbol]
+
+    def derivative(self, variable):
+        if variable == self:
+            return Constant(1)
+        else:
+            return Constant(0)
+
+    def __contains__(self, item):
+        return item == self
 
 
 class Function(Expression):
@@ -313,6 +335,16 @@ class Function(Expression):
             f = Function.BUILTIN_FUNCTIONS[self.symbol]
         return f(*[a.evaluate(substitutions_unknowns) for a in self.arguments])
 
+    # TODO: implement derivative
+
+    def __contains__(self, item):
+        if item == self:
+            return True
+        for a in self.arguments:
+            if item in a:
+                return True
+        return False
+
 
 class OperatorNode(Expression):
     """The base for an Operator in a node."""
@@ -348,6 +380,14 @@ class UnaryNode(OperatorNode):
     def evaluate(self, substitutions_unknowns={}):
         value = self.operand.evaluate(substitutions_unknowns)
         return eval("%s%s" % (self.op_symbol, str(value)))
+
+    def derivative(self, variable):
+        return eval("%s%s" % (self.op_symbol, str(self.operand.derivative(variable))))
+
+    def __contains__(self, item):
+        if item == self:
+            return True
+        return item in self.operand
 
 
 class NegationNode(UnaryNode):
@@ -397,6 +437,16 @@ class BinaryNode(OperatorNode):
         rvalue = self.rhs.evaluate(substitutions_unknowns)
         return eval("(%s) %s (%s)" % (lvalue, self.op_symbol, rvalue))
 
+    def derivative(self, variable):
+        lvalue = self.lhs.derivative(variable)
+        rvalue = self.rhs.derivative(variable)
+        return eval("lvalue %s rvalue" % self.op_symbol)
+
+    def __contains__(self, item):
+        if item == self:
+            return True
+        return item in self.lhs or item in self.rhs
+
 
 class AdditionNode(BinaryNode):
     """Represents the addition operator"""
@@ -418,12 +468,22 @@ class MultiplicationNode(BinaryNode):
     def __init__(self, lhs, rhs):
         super().__init__(lhs, rhs, Expression.OPERATOR_LIST["Multiplication"])
 
+    def derivative(self, variable):
+        lderiv = self.lhs.derivative(variable)
+        rderiv = self.rhs.derivative(variable)
+        return lderiv * self.rhs + self.lhs * rderiv
+
 
 class DivisionNode(BinaryNode):
     """Represents the division operator"""
 
     def __init__(self, lhs, rhs):
         super().__init__(lhs, rhs, Expression.OPERATOR_LIST["Division"])
+
+    def derivative(self, variable: Variable):
+        lderiv = self.lhs.derivative(variable)
+        rderiv = self.rhs.derivative(variable)
+        return lderiv * self.rhs - self.lhs * rderiv / self.lhs ** 2
 
 
 class PowerNode(BinaryNode):
@@ -432,4 +492,15 @@ class PowerNode(BinaryNode):
     def __init__(self, lhs, rhs):
         super().__init__(lhs, rhs, Expression.OPERATOR_LIST["Power"])
 
+    def derivative(self, variable):
+        if variable not in self.rhs:
+            return self.rhs * self.lhs ** (self.rhs - Constant(1)) * self.lhs.derivative(variable)
 
+        if variable not in self.lhs:
+            return self * Function("log", self.lhs) * self.rhs.derivative(variable)
+
+        return self * (self.rhs.derivative(variable) * Function("log", self.lhs) + self.rhs * self.lhs.derivative(variable) / self.lhs)
+
+f = Expression.from_string("x**x**x")
+print(f)
+print(f.derivative(Variable("x")))
