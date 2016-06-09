@@ -75,6 +75,7 @@ class Expression:
                   "*": 1,
                   "/": 1,
                   "**": 2}
+    FUNCTION_END_TOKEN = "@"
 
     # TODO: when adding new methods that should be supported by all subclasses, add them to this list
 
@@ -109,14 +110,23 @@ class Expression:
 
         # list of operators
         oplist = Expression.OPERATOR_SYMBOLS
+        fnlist = list(Function.BUILTIN_FUNCTIONS.keys())
 
-        for token in tokens:
+        for index in range(len(tokens)):
+            token = tokens[index]
             if is_number(token):
                 # numbers go directly to the output
                 if is_int(token):
                     output.append(Constant(int(token)))
                 else:
                     output.append(Constant(float(token)))
+            elif token in fnlist:
+                stack.append(token)
+                # to keep track of which arguments belong to the function
+                output.append(Expression.FUNCTION_END_TOKEN)
+            elif token == ",":
+                while not stack[-1] == "(":
+                    output.append(stack.pop())
             elif token in oplist:
                 # pop operators from the stack to the output until the top is no longer an operator
                 while len(stack) > 0 and stack[-1] in oplist:
@@ -136,13 +146,18 @@ class Expression:
                     output.append(stack.pop())
                 # pop the left parenthesis from the stack (but not to the output)
                 stack.pop()
-            # TODO: do we need more kinds of tokens?
-            elif len(token) == 1:
-                # unknown token of 1 character is presumed to be a variable
-                output.append(Variable(token))
+            elif index+1 < len(tokens) and tokens[index+1] == "(":
+                # unknown token that is followed by a left parenthesis is presumed to be a function
+                stack.append(token)
+                # make sure the function is recognized later
+                fnlist.append(token)
+                output.append(Expression.FUNCTION_END_TOKEN)
             else:
-                # unknown token
-                raise ValueError("Unknown token: %s" % token)
+                # unknown token is presumed to be a variable
+                output.append(Variable(token))
+            # else:
+            #     # unknown token
+            #     raise ValueError("Unknown token: %s" % token)
 
         # pop any tokens still on the stack to the output
         while len(stack) > 0:
@@ -155,13 +170,20 @@ class Expression:
                 y = stack.pop()
                 x = stack.pop()
                 stack.append(eval("x %s y" % t))
+            elif t in fnlist:
+                arguments = []
+                while stack[-1] != Expression.FUNCTION_END_TOKEN:
+                    arguments.insert(0, stack.pop())
+                # get rid of the FUNCTION_END_TOKEN
+                stack.pop()
+                stack.append(Function(t, *arguments))
             else:
-                # a constant, push it to the stack
+                # a constant or FUNCTION_END_TOKEN, push it to the stack
                 stack.append(t)
         # the resulting expression tree is what's left on the stack
         return stack[0]
 
-    def evaluate(self, variable_values: dict):
+    def evaluate(self, substitutions_unknowns=dict()):
         pass
 
 
@@ -180,7 +202,7 @@ class Constant(Expression):
     def __str__(self):
         return str(self.value)
 
-    def evaluate(self, variable_values: dict):
+    def evaluate(self, substitutions_unknowns=dict()):
         return self.value
 
     # allow conversion to numerical values
@@ -206,8 +228,41 @@ class Variable(Expression):
     def __str__(self):
         return self.symbol
 
-    def evaluate(self, variable_values: dict):
-        return variable_values[self.symbol]
+    def evaluate(self, substitutions_unknowns=dict()):
+        return substitutions_unknowns[self.symbol]
+
+
+class Function(Expression):
+    """Represents a function call, either pre-existing or later to be determined"""
+
+    BUILTIN_FUNCTIONS = {"sin": math.sin,  # sin(x)
+                         "cos": math.cos,  # cos(x)
+                         "tan": math.tan,  # tan(x)
+                         "sec": lambda x: 1/math.cos(x),
+                         "csc": lambda x: 1/math.sin(x),
+                         "cot": lambda x: 1/math.tan(x),
+                         "log": math.log  # log(x, base)
+                         }
+
+    def __init__(self, symbol, *args):
+        self.symbol = symbol
+        self.arguments = args
+
+    def __eq__(self, other):
+        if isinstance(other, Function):
+            return self.symbol == other.symbol and self.arguments == other.arguments
+        else:
+            return False
+
+    def __str__(self):
+        return "%s(%s)" % (self.symbol, ", ".join([str(a) for a in self.arguments]))
+
+    def evaluate(self, substitutions_unknowns=dict()):
+        try:
+            f = substitutions_unknowns[self.symbol]
+        except KeyError:
+            f = Function.BUILTIN_FUNCTIONS[self.symbol]
+        return f(*[a.evaluate(substitutions_unknowns) for a in self.arguments])
 
 
 class OperatorNode(Expression):
@@ -249,9 +304,9 @@ class BinaryNode(OperatorNode):
                 rstring = "(%s)" % rstring
         return "%s %s %s" % (lstring, self.op_symbol, rstring)
 
-    def evaluate(self, variable_values: dict):
-        lvalue = self.lhs.evaluate(variable_values)
-        rvalue = self.rhs.evaluate(variable_values)
+    def evaluate(self, substitutions_unknowns=dict()):
+        lvalue = self.lhs.evaluate(substitutions_unknowns)
+        rvalue = self.rhs.evaluate(substitutions_unknowns)
         return eval((str(lvalue) + "%s" + str(rvalue)) % self.op_symbol)
 
 
