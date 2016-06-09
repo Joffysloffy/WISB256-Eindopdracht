@@ -216,6 +216,10 @@ class Constant(Expression):
 class Variable(Expression):
     """Represents a variable that may later be substituted for a value"""
 
+    BUILTIN_CONSTANTS = {"pi": math.pi,
+                         "π": math.pi,
+                         "e": math.e}
+
     def __init__(self, symbol):
         self.symbol = symbol
 
@@ -229,19 +233,37 @@ class Variable(Expression):
         return self.symbol
 
     def evaluate(self, substitutions_unknowns=dict()):
-        return substitutions_unknowns[self.symbol]
+        try:
+            return substitutions_unknowns[self.symbol]
+        except KeyError:
+            return Variable.BUILTIN_CONSTANTS[self.symbol]
 
 
 class Function(Expression):
     """Represents a function call, either pre-existing or later to be determined"""
 
-    BUILTIN_FUNCTIONS = {"sin": math.sin,  # sin(x)
-                         "cos": math.cos,  # cos(x)
-                         "tan": math.tan,  # tan(x)
-                         "sec": lambda x: 1/math.cos(x),
-                         "csc": lambda x: 1/math.sin(x),
-                         "cot": lambda x: 1/math.tan(x),
-                         "log": math.log  # log(x, base)
+    BUILTIN_FUNCTIONS = {"sin": math.sin,
+                         "cos": math.cos,
+                         "tan": math.tan,
+                         "asin": math.asin,
+                         "acos": math.acos,
+                         "atan": math.atan,
+                         "atan2": math.atan2,  # atan2(y, x)
+                         "sinh": math.sinh,
+                         "cosh": math.cosh,
+                         "tanh": math.tanh,
+                         "asinh": math.asinh,
+                         "acosh": math.acosh,
+                         "atanh": math.atanh,
+                         "log": math.log,  # log(x, base=e)
+                         "lg": math.log2,
+                         "exp": math.exp,
+                         "ceil": math.ceil,
+                         "floor": math.floor,
+                         "factorial": math.factorial,
+                         "abs": math.fabs,
+                         "sqrt": math.sqrt,
+                         "√": math.sqrt
                          }
 
     def __init__(self, symbol, *args):
