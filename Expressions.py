@@ -115,6 +115,10 @@ class Expression:
     def __invert__(self):
         return NegationNode(self)
 
+    # the same as negation ~ so that overloaded negation with - be possible
+    def __neg__(self):
+        return NegationNode(self)
+
     # basic Shunting-yard algorithm
     @staticmethod
     def from_string(string):
@@ -206,7 +210,7 @@ class Expression:
         # the resulting expression tree is what's left on the stack
         return stack[0]
 
-    def evaluate(self, substitutions_unknowns=dict()):
+    def evaluate(self, substitutions_unknowns={}):
         pass
 
 
@@ -225,7 +229,7 @@ class Constant(Expression):
     def __str__(self):
         return str(self.value)
 
-    def evaluate(self, substitutions_unknowns=dict()):
+    def evaluate(self, substitutions_unknowns={}):
         return self.value
 
     # allow conversion to numerical values
@@ -255,7 +259,7 @@ class Variable(Expression):
     def __str__(self):
         return self.symbol
 
-    def evaluate(self, substitutions_unknowns=dict()):
+    def evaluate(self, substitutions_unknowns={}):
         try:
             return substitutions_unknowns[self.symbol]
         except KeyError:
@@ -302,7 +306,7 @@ class Function(Expression):
     def __str__(self):
         return "%s(%s)" % (self.symbol, ", ".join([str(a) for a in self.arguments]))
 
-    def evaluate(self, substitutions_unknowns=dict()):
+    def evaluate(self, substitutions_unknowns={}):
         try:
             f = substitutions_unknowns[self.symbol]
         except KeyError:
@@ -334,9 +338,14 @@ class UnaryNode(OperatorNode):
             return False
 
     def __str__(self):
-        return self.op_symbol + str(self.operand)
+        # TODO: fix redundant parentheses in negated multiplication (e.g., 2*-(1*2) renders 2 * -(1 * 2))
+        vstring = str(self.operand)
+        if isinstance(self.operand, OperatorNode):
+            if self.operand.precedence < self.precedence:
+                vstring = "(%s)" % vstring
+        return self.op_symbol + vstring
 
-    def evaluate(self, substitutions_unknowns=dict()):
+    def evaluate(self, substitutions_unknowns={}):
         value = self.operand.evaluate(substitutions_unknowns)
         return eval("%s%s" % (self.op_symbol, str(value)))
 
@@ -349,11 +358,9 @@ class NegationNode(UnaryNode):
 
     def __str__(self):
         # use ‘-’ instead of ‘~’ when printing
-        return "-" + str(self.operand)
+        return "-" + super().__str__()[1:]
 
-    def evaluate(self, substitutions_unknowns=dict()):
-        print(Constant(0) - self.operand)
-        print((Constant(0) - self.operand).evaluate(substitutions_unknowns))
+    def evaluate(self, substitutions_unknowns={}):
         return (Constant(0) - self.operand).evaluate(substitutions_unknowns)
 
 
@@ -375,7 +382,6 @@ class BinaryNode(OperatorNode):
         lstring = str(self.lhs)
         rstring = str(self.rhs)
 
-        # TODO: do we always need parentheses?
         if isinstance(self.lhs, OperatorNode):
             if self.lhs.precedence < self.precedence or\
                (self.lhs.precedence == self.precedence and not self.lhs.is_left_associative):
@@ -386,7 +392,7 @@ class BinaryNode(OperatorNode):
                 rstring = "(%s)" % rstring
         return "%s %s %s" % (lstring, self.op_symbol, rstring)
 
-    def evaluate(self, substitutions_unknowns=dict()):
+    def evaluate(self, substitutions_unknowns={}):
         lvalue = self.lhs.evaluate(substitutions_unknowns)
         rvalue = self.rhs.evaluate(substitutions_unknowns)
         return eval("(%s) %s (%s)" % (lvalue, self.op_symbol, rvalue))
@@ -427,6 +433,3 @@ class PowerNode(BinaryNode):
         super().__init__(lhs, rhs, Expression.OPERATOR_LIST["Power"])
 
 
-expr = Expression.from_string("3 * -(2 + 1)")
-print(expr)
-print(expr.evaluate())
