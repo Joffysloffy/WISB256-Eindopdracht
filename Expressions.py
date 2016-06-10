@@ -370,10 +370,9 @@ class UnaryNode(OperatorNode):
             return False
 
     def __str__(self):
-        # TODO: fix redundant parentheses in negated multiplication (e.g., 2*-(1*2) renders 2 * -(1 * 2))
         vstring = str(self.operand)
         if isinstance(self.operand, OperatorNode):
-            if self.operand.precedence < self.precedence:
+            if self.operand.precedence < self.precedence-1:
                 vstring = "(%s)" % vstring
         return self.op_symbol + vstring
 
@@ -402,6 +401,10 @@ class NegationNode(UnaryNode):
 
     def evaluate(self, substitutions_unknowns={}):
         return (Constant(0) - self.operand).evaluate(substitutions_unknowns)
+
+    def derivative(self, variable):
+        der = self.operand.derivative(variable)
+        return eval("-der")
 
 
 class BinaryNode(OperatorNode):
@@ -501,6 +504,4 @@ class PowerNode(BinaryNode):
 
         return self * (self.rhs.derivative(variable) * Function("log", self.lhs) + self.rhs * self.lhs.derivative(variable) / self.lhs)
 
-f = Expression.from_string("x**x**x")
-print(f)
-print(f.derivative(Variable("x")))
+
