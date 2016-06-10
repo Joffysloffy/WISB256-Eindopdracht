@@ -381,7 +381,8 @@ class UnaryNode(OperatorNode):
         return eval("%s%s" % (self.op_symbol, str(value)))
 
     def derivative(self, variable):
-        return eval("%s%s" % (self.op_symbol, str(self.operand.derivative(variable))))
+        der = self.operand.derivative(variable)
+        return eval("%sder" % self.op_symbol)
 
     def __contains__(self, item):
         if item == self:
