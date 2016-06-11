@@ -169,6 +169,9 @@ class Expression:
                     output.append(stack.pop())
                 # pop the left parenthesis from the stack (but not to the output)
                 stack.pop()
+                # if the token before the left parenthesis is a function, pop it to the output
+                if len(stack) > 0 and stack[-1] in fnlist:
+                    output.append(stack.pop())
             elif index+1 < len(tokens) and tokens[index+1] == "(":
                 # unknown token that is followed by a left parenthesis is presumed to be a function
                 stack.append(token)
@@ -210,7 +213,15 @@ class Expression:
         # the resulting expression tree is what's left on the stack
         return stack[0]
 
+    # evaluate the expression with values for variables and functions with a dictionary
+    # keys are variables as strings with concrete values
+    # keys are function names as strings with FunctionBase as values
     def evaluate(self, substitutions_unknowns={}):
+        pass
+
+    # substitute expressions for variables with a dictionary
+    # keys are variables as strings with Expressions as values
+    def substitute(self, substitutions_variables):
         pass
 
     def derivative(self, variable):
@@ -238,6 +249,9 @@ class Constant(Expression):
 
     def evaluate(self, substitutions_unknowns={}):
         return self.value
+
+    def substitute(self, substitutions_variables):
+        return self
 
     def derivative(self, variable):
         return Constant(0)
@@ -278,6 +292,12 @@ class Variable(Expression):
         except KeyError:
             return Variable.BUILTIN_CONSTANTS[self.symbol]
 
+    def substitute(self, substitutions_variables):
+        try:
+            return substitutions_variables[self.symbol]
+        except KeyError:
+            return Variable(self.symbol)
+
     def derivative(self, variable):
         if variable == self:
             return Constant(1)
@@ -286,6 +306,14 @@ class Variable(Expression):
 
     def __contains__(self, item):
         return item == self
+
+
+class FunctionBase:
+
+    def __init__(self, executable, derivative=None, variable=None):
+        self.executable = executable  # a Python function/method
+        self.derivative = derivative  # Expression
+        self.variable = variable  # the variable to be substituted in self.derivative
 
 
 class Function(Expression):
@@ -335,6 +363,9 @@ class Function(Expression):
             f = Function.BUILTIN_FUNCTIONS[self.symbol]
         return f(*[a.evaluate(substitutions_unknowns) for a in self.arguments])
 
+    def substitute(self, substitutions_variables):
+        return Function(self.symbol, *[a.substitute(substitutions_variables) for a in self.arguments])
+
     # TODO: implement derivative
 
     def __contains__(self, item):
@@ -378,7 +409,11 @@ class UnaryNode(OperatorNode):
 
     def evaluate(self, substitutions_unknowns={}):
         value = self.operand.evaluate(substitutions_unknowns)
-        return eval("%s%s" % (self.op_symbol, str(value)))
+        return eval("%svalue" % self.op_symbol)
+
+    def substitute(self, substitutions_variables):
+        value = self.operand.substitute(substitutions_variables)
+        return eval("%svalue" % self.op_symbol)
 
     def derivative(self, variable):
         der = self.operand.derivative(variable)
@@ -404,6 +439,7 @@ class NegationNode(UnaryNode):
         return (Constant(0) - self.operand).evaluate(substitutions_unknowns)
 
     def derivative(self, variable):
+        # use ‘-’ instead of ‘~’ for the derivative of the operand could be a float or int
         der = self.operand.derivative(variable)
         return eval("-der")
 
@@ -439,7 +475,12 @@ class BinaryNode(OperatorNode):
     def evaluate(self, substitutions_unknowns={}):
         lvalue = self.lhs.evaluate(substitutions_unknowns)
         rvalue = self.rhs.evaluate(substitutions_unknowns)
-        return eval("(%s) %s (%s)" % (lvalue, self.op_symbol, rvalue))
+        return eval("(lvalue) %s (rvalue)" % self.op_symbol)
+
+    def substitute(self, substitutions_variables):
+        lvalue = self.lhs.substitute(substitutions_variables)
+        rvalue = self.rhs.substitute(substitutions_variables)
+        return eval("lvalue %s rvalue" % self.op_symbol)
 
     def derivative(self, variable):
         lvalue = self.lhs.derivative(variable)
