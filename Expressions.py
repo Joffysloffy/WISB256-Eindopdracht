@@ -151,7 +151,7 @@ class Expression:
                 while not stack[-1] == "(":
                     output.append(stack.pop())
             elif token in Expression.UNARY_OPERATOR_SYMBOLS:
-                # always pushed onto the stack lest it get paired with a binary operator (e.g., (1**~)2 instead of 1**(~2))
+                # always pushed onto the stack
                 stack.append(token)
             elif token in oplist:
                 # pop operators from the stack to the output until the top is no longer an operator
@@ -317,23 +317,42 @@ class Variable(Expression):
 
 class FunctionBase:
 
-    DEFAULT_VARIABLE = Variable("__VAR__")
+    # default variables for creating functions, iterable with square brackets, but not required
+    class VARGetter(Variable):
+        def __getitem__(self, item):
+            return Variable("__VAR%d__" % item)
+    VAR = VARGetter("__VAR0__")
 
-    def __init__(self, symbol: str, executable=None, derivative=None, variable=DEFAULT_VARIABLE):
+    def __init__(self, symbol: str, executable=None, derivatives=None, variables=None):
         self.symbol = symbol
         self.executable = executable  # a Python function/method
-        self._derivative = derivative  # Expression
-        self.variable = variable  # the variable to be substituted in self.derivative
+
+        # of type Expression
+        if derivatives is None:
+            self._derivatives = []
+        elif not isinstance(derivatives, list):
+            self._derivatives = [derivatives]
+        else:
+            self._derivatives = derivatives
+
+        if variables is None:
+            self.variables = [FunctionBase.VAR[i] for i in range(len(self._derivatives))]
+        else:
+            self.variables = list(variables)  # the variables to be substituted in self.derivative, in order
 
     @property
-    def derivative(self):
-        if self._derivative is None:
-            return Function(FunctionBase(self.symbol + "'", self.executable))
+    def derivatives(self):
+        if self._derivatives == []:
+            return [Function(FunctionBase(self.symbol + "'", self.executable))]
         else:
-            return self._derivative
+            return self._derivatives
 
-    def has_derivative(self):
-        return self._derivative is not None
+    def has_derivative(self, index):
+        try:
+            self._derivatives[index]
+            return True
+        except IndexError:
+            return False
 
     def __eq__(self, other):
         if isinstance(other, FunctionBase):
@@ -347,9 +366,9 @@ class Function(Expression):
         if isinstance(base, str):
             self.base = FunctionBase(base)
         else:
-            self.base = base  # should be FunctionBase
+            self.base = base  # should be of type FunctionBase
         if len(args) == 0:
-            self.arguments = FunctionBase.DEFAULT_VARIABLE,  # comma to make this a tuple
+            self.arguments = FunctionBase.VAR,  # comma to make this a tuple
         else:
             self.arguments = args
 
@@ -372,21 +391,34 @@ class Function(Expression):
     def substitute(self, substitutions_variables):
         return Function(self.base, *[a.substitute(substitutions_variables) for a in self.arguments])
 
-    # TODO: implement derivative for multi-valued functions
+    # TODO: allow specification of functions via dictionary
     def derivative(self, variable):
-        fder = self.base.derivative
-        if not self.base.has_derivative():
-            try:
-                fder = Function.BUILTIN_FUNCTIONS[self.base.symbol].derivative
-            except KeyError:
-                pass
+        diffs = []
+        subst_vars_str = []
+        for i in range(len(self.arguments)):
+            if self.base.has_derivative(i):
+                diffs.append(self.base.derivatives[i])
+                subst_vars_str.append(str(self.base.variables[i]))
+            else:
+                try:
+                    diffs.append(Function.BUILTIN_FUNCTIONS[self.base.symbol].derivatives[i])
+                    subst_vars_str.append(str(Function.BUILTIN_FUNCTIONS[self.base.symbol].variables[i]))
+                except KeyError:
+                    diffs.append(Function("%s_%d" % (self.base.symbol, i+1), *self.arguments))
+                    subst_vars_str.append(str(FunctionBase.VAR[i]))
 
-        if variable in fder:
-            subst_fder = fder.substitute({str(variable): self.arguments[0]})
+        diff_components = []
+        for i in range(len(self.arguments)):
+            if variable in self.arguments[i]:
+                diff_components.append(diffs[i].substitute(dict(zip(subst_vars_str, self.arguments))) * self.arguments[i].derivative(variable))
+
+        if len(diff_components) > 0:
+            result = diff_components[0]
+            for i in range(1, len(diff_components)):
+                result += diff_components[i]
+            return result
         else:
-            subst_fder = fder.substitute({str(FunctionBase.DEFAULT_VARIABLE): self.arguments[0]})
-
-        return subst_fder * self.arguments[0].derivative(variable)
+            return Constant(0)
 
     def __contains__(self, item):
         if item == self:
@@ -549,7 +581,7 @@ class DivisionNode(BinaryNode):
     def derivative(self, variable: Variable):
         lderiv = self.lhs.derivative(variable)
         rderiv = self.rhs.derivative(variable)
-        return lderiv * self.rhs - self.lhs * rderiv / self.lhs ** 2
+        return lderiv * self.rhs - self.lhs * rderiv / self.rhs ** Constant(2)
 
 
 class PowerNode(BinaryNode):
@@ -571,25 +603,25 @@ class PowerNode(BinaryNode):
 Function.BUILTIN_FUNCTIONS = {"sin": FunctionBase("sin", math.sin, Function("cos")),
                               "cos": FunctionBase("cos", math.cos, -Function("sin")),
                               "tan": FunctionBase("tan", math.tan, Constant(1) + Function("tan")**Constant(2)),
-                              "asin": FunctionBase("asin", math.asin, Constant(1) / Function("sqrt", Constant(1) - FunctionBase.DEFAULT_VARIABLE**Constant(2))),
-                              "acos": FunctionBase("acos", math.acos, Constant(-1) / Function("sqrt", Constant(1) - FunctionBase.DEFAULT_VARIABLE**Constant(2))),
-                              "atan": FunctionBase("atan", math.atan, Constant(1) / (FunctionBase.DEFAULT_VARIABLE**Constant(2) + Constant(1))),
+                              "asin": FunctionBase("asin", math.asin, Constant(1) / Function("sqrt", Constant(1) - FunctionBase.VAR**Constant(2))),
+                              "acos": FunctionBase("acos", math.acos, Constant(-1) / Function("sqrt", Constant(1) - FunctionBase.VAR**Constant(2))),
+                              "atan": FunctionBase("atan", math.atan, Constant(1) / (FunctionBase.VAR**Constant(2) + Constant(1))),
                               "atan2": FunctionBase("atan2", math.atan2),  # atan2(y, x)
                               "sinh": FunctionBase("sinh", math.sinh, Function("cosh")),
                               "cosh": FunctionBase("cosh", math.cosh, Function("sinh")),
                               "tanh": FunctionBase("tanh", math.tanh, Constant(1) - Function("tanh")**Constant(2)),
-                              "asinh": FunctionBase("asinh", math.asinh, Constant(1) / Function("sqrt", FunctionBase.DEFAULT_VARIABLE**Constant(2) + Constant(1))),
-                              "acosh": FunctionBase("acosh", math.acosh, Constant(1) / Function("sqrt", FunctionBase.DEFAULT_VARIABLE**Constant(2) - Constant(1))),
-                              "atanh": FunctionBase("atanh", math.atanh, Constant(1) / (Constant(1) - FunctionBase.DEFAULT_VARIABLE**Constant(2))),
-                              "log": FunctionBase("log", math.log),  # log(x, base=e), TODO: support derivative with second argument
-                              "lg": FunctionBase("lg", math.log2, Constant(1) / (FunctionBase.DEFAULT_VARIABLE * Constant(math.log(2)))),
+                              "asinh": FunctionBase("asinh", math.asinh, Constant(1) / Function("sqrt", FunctionBase.VAR**Constant(2) + Constant(1))),
+                              "acosh": FunctionBase("acosh", math.acosh, Constant(1) / Function("sqrt", FunctionBase.VAR**Constant(2) - Constant(1))),
+                              "atanh": FunctionBase("atanh", math.atanh, Constant(1) / (Constant(1) - FunctionBase.VAR**Constant(2))),
+                              "log": FunctionBase("log", math.log, [Constant(1) / (FunctionBase.VAR * Function("log", Variable("e"))), Constant(0)], [FunctionBase.VAR, Variable("e")]),  # log(x, base=e)
+                              "lg": FunctionBase("lg", math.log2, Constant(1) / (FunctionBase.VAR * Function("log", Constant(2)))),
                               "exp": FunctionBase("exp", math.exp, Function("exp")),
                               "ceil": FunctionBase("ceil", math.ceil),
                               "floor": FunctionBase("floor", math.floor),
                               "factorial": FunctionBase("factorial", math.factorial),
                               "abs": FunctionBase("abs", math.fabs),
-                              "sqrt": FunctionBase("sqrt", math.sqrt, Constant(1) / (Constant(2) * Function("sqrt"))),
-                              "√": FunctionBase("√", math.sqrt, Constant(1) / (Constant(2) * Function("√")))
+                              "sqrt": FunctionBase("sqrt", math.sqrt, Constant(1) / (Constant(2) * Function("sqrt")))
                               }
+
 
 
