@@ -90,7 +90,7 @@ class Expression:
                   "*": 1,
                   "/": 1,
                   "**": 2,
-                  "~": 2}
+                  "~": 1}
     FUNCTION_END_TOKEN = "@"
 
     # TODO: when adding new methods that should be supported by all subclasses, add them to this list
@@ -150,6 +150,9 @@ class Expression:
                 # pop everything up to the left parenthesis to the output
                 while not stack[-1] == "(":
                     output.append(stack.pop())
+            elif token in Expression.UNARY_OPERATOR_SYMBOLS:
+                # always pushed onto the stack lest it get paired with a binary operator (e.g., (1**~)2 instead of 1**(~2))
+                stack.append(token)
             elif token in oplist:
                 # pop operators from the stack to the output until the top is no longer an operator
                 while len(stack) > 0 and stack[-1] in oplist:
@@ -369,7 +372,7 @@ class Function(Expression):
     def substitute(self, substitutions_variables):
         return Function(self.base, *[a.substitute(substitutions_variables) for a in self.arguments])
 
-    # TODO: implement derivative
+    # TODO: implement derivative for multi-valued functions
     def derivative(self, variable):
         fder = self.base.derivative
         if not self.base.has_derivative():
@@ -420,7 +423,7 @@ class UnaryNode(OperatorNode):
     def __str__(self):
         vstring = str(self.operand)
         if isinstance(self.operand, OperatorNode):
-            if self.operand.precedence < self.precedence-1:
+            if self.operand.precedence < self.precedence:
                 vstring = "(%s)" % vstring
         return self.op_symbol + vstring
 
@@ -484,8 +487,9 @@ class BinaryNode(OperatorNode):
                (self.lhs.precedence == self.precedence and not self.is_left_associative):
                 lstring = "(%s)" % lstring
         if isinstance(self.rhs, OperatorNode):
-            if self.rhs.precedence < self.precedence or\
-               (self.rhs.precedence == self.precedence and not self.is_right_associative):
+            if not isinstance(self.rhs, UnaryNode) and\
+               (self.rhs.precedence < self.precedence or\
+               (self.rhs.precedence == self.precedence and not self.is_right_associative)):
                 rstring = "(%s)" % rstring
         return "%s %s %s" % (lstring, self.op_symbol, rstring)
 
@@ -587,6 +591,5 @@ Function.BUILTIN_FUNCTIONS = {"sin": FunctionBase("sin", math.sin, Function("cos
                               "sqrt": FunctionBase("sqrt", math.sqrt, Constant(1) / (Constant(2) * Function("sqrt"))),
                               "√": FunctionBase("√", math.sqrt, Constant(1) / (Constant(2) * Function("√")))
                               }
-
 
 
