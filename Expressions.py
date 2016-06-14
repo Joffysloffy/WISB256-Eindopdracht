@@ -226,9 +226,12 @@ class Expression:
     def evaluate(self, substitutions_unknowns={}):
         pass
 
-    # substitute expressions for variables with a dictionary
-    # keys are variables as strings with Expressions as values
-    def substitute(self, substitutions_variables):
+    # substitute expressions for variables and functions with a dictionary
+    # keys of variables are strings with Expressions as values
+    # keys of functions are strings with values either:
+    #     a tuple with first an Expression and then a list of variables used
+    #     just an Expression, provided it use FunctionBase.VAR as its variables
+    def substitute(self, substitutions_unknowns, find_derivatives=True):
         pass
 
     def derivative(self, variable):
@@ -257,7 +260,7 @@ class Constant(Expression):
     def evaluate(self, substitutions_unknowns={}):
         return self.value
 
-    def substitute(self, substitutions_variables):
+    def substitute(self, substitutions_unknowns, find_derivatives=True):
         return self
 
     def derivative(self, variable):
@@ -299,9 +302,9 @@ class Variable(Expression):
         except KeyError:
             return Variable.BUILTIN_CONSTANTS[self.symbol]
 
-    def substitute(self, substitutions_variables):
+    def substitute(self, substitutions_unknowns, find_derivatives=True):
         try:
-            return substitutions_variables[self.symbol]
+            return substitutions_unknowns[self.symbol]
         except KeyError:
             return Variable(self.symbol)
 
@@ -322,6 +325,7 @@ class Variable(Expression):
 
 
 class FunctionBase:
+    """Represents a standard function, with evaluation method and derivative"""
 
     # default variables for creating functions, iterable with square brackets, but not required
     class VARGetter(Variable):
@@ -396,18 +400,55 @@ class Function(Expression):
             f = Function.BUILTIN_FUNCTIONS[self.base.symbol].executable
         return f(*[a.evaluate(substitutions_unknowns) for a in self.arguments])
 
-    def substitute(self, substitutions_variables):
+    def substitute(self, substitutions_unknowns, find_derivatives=True):
         try:
-            (variables, f) = substitutions_variables[self.base.symbol]
-            f_var_subst = dict(zip(variables, [a.substitute(substitutions_variables) for a in self.arguments]))
+            # allow for the use of the default variables VAR
+            val = substitutions_unknowns[self.base.symbol]
+            if isinstance(tuple):
+                (f, variables) = val
+            else:
+                f = val
+                variables = [str(FunctionBase.VAR[i]) for i in range(len(self.arguments))]
+            f_var_subst = dict(zip(variables, [a.substitute(substitutions_unknowns) for a in self.arguments]))
             return f.substitute(f_var_subst)
         except KeyError:
-            return Function(self.base, *[a.substitute(substitutions_variables) for a in self.arguments])
+            if find_derivatives:
+                # attempt to find a provided function of which this one is some derivative
+                fn_name = self.base.symbol
+                var_index_stack = []
+                while fn_name not in substitutions_unknowns:
+                    i = fn_name.rfind("_")
+                    if i > 0:
+                        # get the index of the variable with respect to which the derivative was taken (e.g., f_i -> i-1)
+                        try:
+                            var_index_stack.append(int(fn_name[i+1:]) - 1)
+                        except ValueError:
+                            break
+                        # get the name of the original function (e.g., f_i -> f)
+                        fn_name = fn_name[:i]
+                    else:
+                        break
+                else:  # the loop ended normally
+                    val = substitutions_unknowns[fn_name]
+                    if isinstance(val, tuple):
+                        (f, variables) = val
+                    else:
+                        f = val
+                        variables = [str(FunctionBase.VAR[i]) for i in range(len(self.arguments))]
+                    # repeated take the correct derivative to get back to the unknown derivative
+                    # also keep substituting in case there are nested functions of which we found newly unknown derivatives
+                    while len(var_index_stack) > 0:
+                        f = f.derivative(variables[var_index_stack.pop()]).substitute(substitutions_unknowns)
+                    f_var_subst = dict(zip(variables, [a.substitute(substitutions_unknowns) for a in self.arguments]))
+                    return f.substitute(f_var_subst)
+
+        return Function(self.base, *[a.substitute(substitutions_unknowns) for a in self.arguments])
 
     def derivative(self, variable):
         if isinstance(variable, str):
             variable = Variable(variable)
 
+        # find the derivative w.r.t to each variable and create a dummy function if it does not exist
         diffs = []
         subst_vars_str = []
         for i in range(len(self.arguments)):
@@ -422,11 +463,14 @@ class Function(Expression):
                     diffs.append(Function("%s_%d" % (self.base.symbol, i+1), *self.arguments))
                     subst_vars_str.append(str(FunctionBase.VAR[i]))
 
+        # plug the arguments into the variables of each differentiated function and multiply with the derivative of the corresponding component
         diff_components = []
         for i in range(len(self.arguments)):
             if variable in self.arguments[i]:
-                diff_components.append(diffs[i].substitute(dict(zip(subst_vars_str, self.arguments))) * self.arguments[i].derivative(variable))
+                # here False in substitute(), because trying to find derivatives is redundant, as we know they are not there by construction
+                diff_components.append(diffs[i].substitute(dict(zip(subst_vars_str, self.arguments)), False) * self.arguments[i].derivative(variable))
 
+        # add everything together
         if len(diff_components) > 0:
             result = diff_components[0]
             for i in range(1, len(diff_components)):
@@ -481,8 +525,8 @@ class UnaryNode(OperatorNode):
         value = self.operand.evaluate(substitutions_unknowns)
         return eval("%svalue" % self.op_symbol)
 
-    def substitute(self, substitutions_variables):
-        value = self.operand.substitute(substitutions_variables)
+    def substitute(self, substitutions_unknowns, find_derivatives=True):
+        value = self.operand.substitute(substitutions_unknowns)
         return eval("%svalue" % self.op_symbol)
 
     def derivative(self, variable):
@@ -554,9 +598,9 @@ class BinaryNode(OperatorNode):
         rvalue = self.rhs.evaluate(substitutions_unknowns)
         return eval("(lvalue) %s (rvalue)" % self.op_symbol)
 
-    def substitute(self, substitutions_variables):
-        lvalue = self.lhs.substitute(substitutions_variables)
-        rvalue = self.rhs.substitute(substitutions_variables)
+    def substitute(self, substitutions_unknowns, find_derivatives=True):
+        lvalue = self.lhs.substitute(substitutions_unknowns)
+        rvalue = self.rhs.substitute(substitutions_unknowns)
         return eval("lvalue %s rvalue" % self.op_symbol)
 
     def derivative(self, variable):
@@ -661,8 +705,3 @@ Function.BUILTIN_FUNCTIONS = {"sin": FunctionBase("sin", math.sin, Function("cos
 
 
 
-f = Expression.from_string("x*y")
-expr = Expression.from_string("f(x+y, y)**2")
-print(expr.substitute({"f": (["x", "y"], f)}))
-print(expr.derivative("y"))
-print(expr.derivative("y").substitute({"f": (["x", "y"], f)}))
