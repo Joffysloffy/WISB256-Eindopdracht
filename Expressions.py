@@ -306,6 +306,9 @@ class Variable(Expression):
             return Variable(self.symbol)
 
     def derivative(self, variable):
+        if isinstance(variable, str):
+            variable = Variable(variable)
+
         if variable == self:
             return Constant(1)
         else:
@@ -393,6 +396,9 @@ class Function(Expression):
 
     # TODO: allow specification of functions via dictionary
     def derivative(self, variable):
+        if isinstance(variable, str):
+            variable = Variable(variable)
+
         diffs = []
         subst_vars_str = []
         for i in range(len(self.arguments)):
@@ -430,7 +436,7 @@ class Function(Expression):
 
 
 class OperatorNode(Expression):
-    """The base for an Operator in a node."""
+    """The base for an operator in a node."""
 
     def __init__(self, op_symbol: str, is_left_associative: bool, is_right_associative: bool, precedence: int):
         self.is_left_associative = is_left_associative
@@ -468,6 +474,9 @@ class UnaryNode(OperatorNode):
         return eval("%svalue" % self.op_symbol)
 
     def derivative(self, variable):
+        if isinstance(variable, str):
+            variable = Variable(variable)
+
         der = self.operand.derivative(variable)
         return eval("%sder" % self.op_symbol)
 
@@ -491,6 +500,9 @@ class NegationNode(UnaryNode):
         return (Constant(0) - self.operand).evaluate(substitutions_unknowns)
 
     def derivative(self, variable):
+        if isinstance(variable, str):
+            variable = Variable(variable)
+
         # use ‘-’ instead of ‘~’ for the derivative of the operand could be a float or int
         der = self.operand.derivative(variable)
         return eval("-der")
@@ -536,6 +548,9 @@ class BinaryNode(OperatorNode):
         return eval("lvalue %s rvalue" % self.op_symbol)
 
     def derivative(self, variable):
+        if isinstance(variable, str):
+            variable = Variable(variable)
+
         lvalue = self.lhs.derivative(variable)
         rvalue = self.rhs.derivative(variable)
         return eval("lvalue %s rvalue" % self.op_symbol)
@@ -567,6 +582,9 @@ class MultiplicationNode(BinaryNode):
         super().__init__(lhs, rhs, Expression.OPERATOR_LIST["Multiplication"])
 
     def derivative(self, variable):
+        if isinstance(variable, str):
+            variable = Variable(variable)
+
         lderiv = self.lhs.derivative(variable)
         rderiv = self.rhs.derivative(variable)
         return lderiv * self.rhs + self.lhs * rderiv
@@ -579,6 +597,9 @@ class DivisionNode(BinaryNode):
         super().__init__(lhs, rhs, Expression.OPERATOR_LIST["Division"])
 
     def derivative(self, variable: Variable):
+        if isinstance(variable, str):
+            variable = Variable(variable)
+
         lderiv = self.lhs.derivative(variable)
         rderiv = self.rhs.derivative(variable)
         return lderiv * self.rhs - self.lhs * rderiv / self.rhs ** Constant(2)
@@ -591,6 +612,9 @@ class PowerNode(BinaryNode):
         super().__init__(lhs, rhs, Expression.OPERATOR_LIST["Power"])
 
     def derivative(self, variable):
+        if isinstance(variable, str):
+            variable = Variable(variable)
+
         if variable not in self.rhs:
             return self.rhs * self.lhs ** (self.rhs - Constant(1)) * self.lhs.derivative(variable)
 
