@@ -315,7 +315,10 @@ class Variable(Expression):
             return Constant(0)
 
     def __contains__(self, item):
-        return item == self
+        if isinstance(item, str):
+            return item == self.symbol
+        else:
+            return item == self
 
 
 class FunctionBase:
@@ -360,6 +363,8 @@ class FunctionBase:
     def __eq__(self, other):
         if isinstance(other, FunctionBase):
             return self.symbol == other.symbol and self.executable == other.executable
+        else:
+            return False
 
 
 class Function(Expression):
@@ -392,9 +397,13 @@ class Function(Expression):
         return f(*[a.evaluate(substitutions_unknowns) for a in self.arguments])
 
     def substitute(self, substitutions_variables):
-        return Function(self.base, *[a.substitute(substitutions_variables) for a in self.arguments])
+        try:
+            (variables, f) = substitutions_variables[self.base.symbol]
+            f_var_subst = dict(zip(variables, [a.substitute(substitutions_variables) for a in self.arguments]))
+            return f.substitute(f_var_subst)
+        except KeyError:
+            return Function(self.base, *[a.substitute(substitutions_variables) for a in self.arguments])
 
-    # TODO: allow specification of functions via dictionary
     def derivative(self, variable):
         if isinstance(variable, str):
             variable = Variable(variable)
@@ -429,6 +438,9 @@ class Function(Expression):
     def __contains__(self, item):
         if item == self:
             return True
+        if isinstance(item, str):
+            if item == self.base.symbol:
+                return True
         for a in self.arguments:
             if item in a:
                 return True
@@ -649,3 +661,8 @@ Function.BUILTIN_FUNCTIONS = {"sin": FunctionBase("sin", math.sin, Function("cos
 
 
 
+f = Expression.from_string("x*y")
+expr = Expression.from_string("f(x+y, y)**2")
+print(expr.substitute({"f": (["x", "y"], f)}))
+print(expr.derivative("y"))
+print(expr.derivative("y").substitute({"f": (["x", "y"], f)}))
