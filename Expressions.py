@@ -189,9 +189,6 @@ class Expression:
             else:
                 # unknown token is presumed to be a variable
                 output.append(Variable(token))
-            # else:
-            #     # unknown token
-            #     raise ValueError("Unknown token: %s" % token)
 
         # pop any tokens still on the stack to the output
         while len(stack) > 0:
@@ -241,6 +238,26 @@ class Expression:
 
     def derivative(self, variable):
         pass
+
+    # compute integral numerically on [lower_bound, upper_bound] w.r.t. variable.
+    # substitutions_unknowns works the same as in evaluate()
+    def numeric_integral(self, variable, lower_bound, upper_bound, step_count, substitutions_unknowns=None):
+        if substitutions_unknowns is None:
+            substitutions_unknowns = {}
+
+        if isinstance(variable, Variable):
+            variable = variable.symbol
+        if variable in substitutions_unknowns:
+            raise KeyError("Integration variable '%s' is substituted" % variable)
+
+        step_size = (upper_bound - lower_bound) / step_count
+        # make a partition of points for a middle Riemann sum
+        partition = [lower_bound + step_size / 2 + step_size * i for i in range(step_count)]
+        summation = 0
+        for s in partition:
+            substitutions_unknowns.update({variable: s})
+            summation += step_size * self.evaluate(substitutions_unknowns)
+        return summation
 
     def simplify(self):
         return self
@@ -340,8 +357,14 @@ class FunctionBase:
 
     # default variables for creating functions, iterable with square brackets, but not required
     class VARGetter(Variable):
-        def __getitem__(self, item):
-            return Variable("__VAR%d__" % item)
+        def __getitem__(self, key):
+            if isinstance(key, slice):
+                if key.stop is None:
+                    raise IndexError("Upper bound for variables must be finite")
+                else:
+                    return [self[i] for i in range(*key.indices(key.stop))]
+            else:
+                return Variable("__VAR%d__" % key)
     VAR = VARGetter("__VAR0__")
 
     def __init__(self, symbol: str, executable=None, derivatives=None, variables=None):
@@ -357,14 +380,14 @@ class FunctionBase:
             self._derivatives = derivatives
 
         if variables is None:
-            self.variables = [FunctionBase.VAR[i] for i in range(len(self._derivatives))]
+            self.variables = FunctionBase.VAR[0:len(self._derivatives)]
         else:
             self.variables = list(variables)  # the variables to be substituted in self.derivative, in order
 
     @property
     def derivatives(self):
         if self._derivatives == []:
-            return [Function(FunctionBase(self.symbol + "'", self.executable))]
+            return [Function(FunctionBase(self.symbol + "_1", self.executable))]
         else:
             return self._derivatives
 
@@ -406,7 +429,7 @@ class Function(Expression):
 
     def evaluate(self, substitutions_unknowns={}):
         try:
-            f = substitutions_unknowns[self.base.symbol]
+            f = substitutions_unknowns[self.base.symbol].executable
         except KeyError:
             f = Function.BUILTIN_FUNCTIONS[self.base.symbol].executable
         return f(*[a.evaluate(substitutions_unknowns) for a in self.arguments])
