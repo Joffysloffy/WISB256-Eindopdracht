@@ -633,8 +633,9 @@ class UnaryNode(OperatorNode):
         der = self.operand.derivative(variable)
         return eval("%sder" % self.op_symbol)
 
-    def simplify(self):
-        operand = self.operand.simplify()
+    def simplify(self, operand=None):
+        if operand is None:
+            operand = self.operand.simplify()
         return eval("%soperand" % self.op_symbol)
 
     def __contains__(self, item):
@@ -675,7 +676,7 @@ class NegationNode(UnaryNode):
         if operand == Constant(0):
             return Constant(0)
 
-        return super().simplify()
+        return super().simplify(operand)
 
 
 class BinaryNode(OperatorNode):
@@ -731,9 +732,11 @@ class BinaryNode(OperatorNode):
         rvalue = self.rhs.derivative(variable)
         return eval("lvalue %s rvalue" % self.op_symbol)
 
-    def simplify(self):
-        lhs = self.lhs.simplify()
-        rhs = self.rhs.simplify()
+    def simplify(self, lhs=None, rhs=None):
+        if lhs is None:
+            lhs = self.lhs.simplify()
+        if rhs is None:
+            rhs = self.rhs.simplify()
 
         # evaluate operations between two constants
         if isinstance(lhs, Constant) and isinstance(rhs, Constant):
@@ -843,7 +846,7 @@ class AdditionNode(BinaryNode):
             if lhs.rhs == rhs.rhs:
                 return ((lhs.lhs + rhs.lhs) / lhs.rhs).simplify()
 
-        return super().simplify()
+        return super().simplify(lhs, rhs)
 
 
 class SubtractionNode(BinaryNode):
@@ -883,7 +886,7 @@ class SubtractionNode(BinaryNode):
             if lhs.rhs == rhs.rhs:
                 return ((lhs.lhs - rhs.lhs) / lhs.rhs).simplify()
 
-        return super().simplify()
+        return super().simplify(lhs, rhs)
 
 
 class MultiplicationNode(BinaryNode):
@@ -940,7 +943,7 @@ class MultiplicationNode(BinaryNode):
         if distr_simpl is not None:
             return distr_simpl
 
-        return super().simplify()
+        return super().simplify(lhs, rhs)
 
 
 class DivisionNode(BinaryNode):
@@ -1016,7 +1019,7 @@ class DivisionNode(BinaryNode):
         if distr_simpl is not None:
             return distr_simpl
 
-        return super().simplify()
+        return super().simplify(lhs, rhs)
 
 
 class PowerNode(BinaryNode):
@@ -1050,11 +1053,15 @@ class PowerNode(BinaryNode):
         if lhs == Constant(0) or lhs == Constant(1) or rhs == Constant(1):
             return lhs
 
-        #squaring is the inverse of taking the square root
+        # squaring is the inverse of taking the square root
         if rhs == Constant(2):
             if isinstance(lhs, Function):
                 if lhs.base.symbol == "sqrt":
                     return lhs.arguments[0].simplify()
+
+        # negative powers is division by the positive power
+        if isinstance(rhs, NegationNode):
+            return (Constant(1) / lhs ** rhs.operand).simplify()
 
         # a power of a power is the product of the powers (with some adjustments for powers of negatives)
         if isinstance(lhs, PowerNode):
@@ -1069,7 +1076,7 @@ class PowerNode(BinaryNode):
             else:
                 return (base ** power).simplify()
 
-        return super().simplify()
+        return super().simplify(lhs, rhs)
 
 
 Function.BUILTIN_FUNCTIONS = {"sin": FunctionBase("sin", math.sin, Function("cos")),
