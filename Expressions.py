@@ -152,9 +152,12 @@ class Expression:
                 # to keep track of which arguments belong to the function
                 output.append(Expression.FUNCTION_END_TOKEN)
             elif token == ",":
-                # pop everything up to the left parenthesis to the output
-                while not stack[-1] == "(":
-                    output.append(stack.pop())
+                # pop everything up to the left parenthesis to the output, but leave that on the stack
+                try:
+                    while not stack[-1] == "(":
+                        output.append(stack.pop())
+                except IndexError as e:
+                    raise IndexError("misplaced function separator or mismatched parentheses") from e
             elif token in Expression.UNARY_OPERATOR_SYMBOLS:
                 # always pushed onto the stack
                 stack.append(token)
@@ -173,10 +176,13 @@ class Expression:
                 stack.append(token)
             elif token == ")":
                 # right parenthesis: pop everything up to the last left parenthesis to the output
-                while not stack[-1] == "(":
-                    output.append(stack.pop())
-                # pop the left parenthesis from the stack (but not to the output)
-                stack.pop()
+                try:
+                    while not stack[-1] == "(":
+                        output.append(stack.pop())
+                    # pop the left parenthesis from the stack (but not to the output)
+                    stack.pop()
+                except IndexError as e:
+                    raise IndexError("mismatched parentheses") from e
                 # if the token before the left parenthesis is a function, pop it to the output
                 if len(stack) > 0 and stack[-1] in fnlist:
                     output.append(stack.pop())
@@ -198,12 +204,18 @@ class Expression:
         for t in output:
             if t in Expression.UNARY_OPERATOR_SYMBOLS:
                 # first handle the unary operators
-                x = stack.pop()
+                try:
+                    x = stack.pop()
+                except IndexError as e:
+                    raise IndexError("missing argument for '%s' operator" % t) from e
                 stack.append(eval("%sx" % t))
             elif t in oplist:
                 # let eval and operator overloading take care of figuring out what to do
-                y = stack.pop()
-                x = stack.pop()
+                try:
+                    y = stack.pop()
+                    x = stack.pop()
+                except IndexError as e:
+                    raise IndexError("missing argument(s) for '%s' operator" % t) from e
                 stack.append(eval("x %s y" % t))
             elif t in fnlist:
                 arguments = []
@@ -226,7 +238,7 @@ class Expression:
     # keys are variables as strings with concrete values
     # keys are function names as strings with FunctionBase as values
     def evaluate(self, substitutions_unknowns={}):
-        pass
+        raise NotImplementedError("evaluation for the following expression was not possible: %s" % self)
 
     # substitute expressions for variables and functions with a dictionary
     # keys of variables are strings with Expressions as values
@@ -236,10 +248,12 @@ class Expression:
     def substitute(self, substitutions_unknowns, find_derivatives=True):
         return self
 
+    # variable can either be a string or of type Variable
     def derivative(self, variable):
-        pass
+        raise NotImplementedError("the following expression could not be differentiated: %s" % self)
 
     # compute integral numerically on [lower_bound, upper_bound] w.r.t. variable.
+    # variable can be a string or of type Variable
     # substitutions_unknowns works the same as in evaluate()
     def numeric_integral(self, variable, lower_bound, upper_bound, step_count, substitutions_unknowns=None):
         if substitutions_unknowns is None:
@@ -248,7 +262,7 @@ class Expression:
         if isinstance(variable, Variable):
             variable = variable.symbol
         if variable in substitutions_unknowns:
-            raise KeyError("Integration variable '%s' is substituted" % variable)
+            raise KeyError("integration variable '%s' is substituted" % variable)
 
         step_size = (upper_bound - lower_bound) / step_count
         # make a partition of points for a middle Riemann sum
@@ -263,8 +277,7 @@ class Expression:
         return self
 
     def __contains__(self, item):
-        if item == self:
-            return True
+        return item == self
 
 
 class Constant(Expression):
@@ -289,6 +302,7 @@ class Constant(Expression):
         return Constant(0)
 
     def simplify(self):
+        # set negative constants to negated positive ones for further simplifications
         if self.value < 0:
             return -Constant(-self.value)
         else:
@@ -328,7 +342,10 @@ class Variable(Expression):
         try:
             return substitutions_unknowns[self.symbol]
         except KeyError:
-            return Variable.BUILTIN_CONSTANTS[self.symbol]
+            try:
+                return Variable.BUILTIN_CONSTANTS[self.symbol]
+            except KeyError as e:
+                raise KeyError("variable '%s' was unspecified" % self.symbol) from e
 
     def substitute(self, substitutions_unknowns, find_derivatives=True):
         try:
@@ -353,14 +370,14 @@ class Variable(Expression):
 
 
 class FunctionBase:
-    """Represents a standard function, with evaluation method and derivative"""
+    """Represents a standard function, with evaluation method and derivatives"""
 
-    # default variables for creating functions, iterable with square brackets, but not required
+    # default variables for creating functions, optionally iterable with square brackets
     class VARGetter(Variable):
         def __getitem__(self, key):
             if isinstance(key, slice):
                 if key.stop is None:
-                    raise IndexError("Upper bound for variables must be finite")
+                    raise IndexError("upper bound for VAR must be finite")
                 else:
                     return [self[i] for i in range(*key.indices(key.stop))]
             else:
@@ -387,11 +404,11 @@ class FunctionBase:
     @property
     def derivatives(self):
         if self._derivatives == []:
-            return [Function(FunctionBase(self.symbol + "_1", self.executable))]
+            return [Function(FunctionBase(self.symbol + "_1"))]
         else:
             return self._derivatives
 
-    def has_derivative(self, index):
+    def has_derivative(self, index=0):
         try:
             self._derivatives[index]
             return True
@@ -408,6 +425,8 @@ class FunctionBase:
 class Function(Expression):
     """Represents a function call, either pre-existing or later to be determined"""
 
+    # base is of type FunctionBase, or just a string
+    # *args represent the arguments of the function, which should be Expressions
     def __init__(self, base, *args):
         if isinstance(base, str):
             self.base = FunctionBase(base)
@@ -420,7 +439,7 @@ class Function(Expression):
 
     def __eq__(self, other):
         if isinstance(other, Function):
-            return self.base == other.base and self.arguments == other.arguments
+            return self.base.symbol == other.base.symbol and self.arguments == other.arguments
         else:
             return False
 
@@ -431,7 +450,10 @@ class Function(Expression):
         try:
             f = substitutions_unknowns[self.base.symbol].executable
         except KeyError:
-            f = Function.BUILTIN_FUNCTIONS[self.base.symbol].executable
+            try:
+                f = Function.BUILTIN_FUNCTIONS[self.base.symbol].executable
+            except KeyError as e:
+                raise KeyError("function '%s' was unspecified" % self.base.symbol) from e
         return f(*[a.evaluate(substitutions_unknowns) for a in self.arguments])
 
     def substitute(self, substitutions_unknowns, find_derivatives=True):
@@ -453,12 +475,12 @@ class Function(Expression):
                 while fn_name not in substitutions_unknowns:
                     i = fn_name.rfind("_")
                     if i > 0:
-                        # get the index of the variable with respect to which the derivative was taken (e.g., f_i -> i-1)
+                        # get the index of the variable with respect to which the derivative was taken (e.g., f_j -> j-1)
                         try:
                             var_index_stack.append(int(fn_name[i+1:]) - 1)
                         except ValueError:
                             break
-                        # get the name of the original function (e.g., f_i -> f)
+                        # get the name of the original function (e.g., f_j -> f)
                         fn_name = fn_name[:i]
                     else:
                         break
@@ -469,22 +491,23 @@ class Function(Expression):
                     else:
                         f = val
                         variables = [str(FunctionBase.VAR[i]) for i in range(len(self.arguments))]
-                    # repeated take the correct derivative to get back to the unknown derivative
+                    # repeatedly take the correct derivative to get back to the unknown derivative, where we started
                     # also keep substituting in case there are nested functions of which we found newly unknown derivatives
                     while len(var_index_stack) > 0:
                         f = f.derivative(variables[var_index_stack.pop()]).substitute(substitutions_unknowns)
                     f_var_subst = dict(zip(variables, [a.substitute(substitutions_unknowns) for a in self.arguments]))
                     return f.substitute(f_var_subst)
 
+        # the function itself was not to be substituted, so pass the substitution on to its arguments
         return Function(self.base, *[a.substitute(substitutions_unknowns) for a in self.arguments])
 
     def derivative(self, variable):
         if isinstance(variable, str):
             variable = Variable(variable)
 
-        # find the derivative w.r.t to each variable and create a dummy function if it does not exist
-        diffs = []
-        subst_vars_str = []
+        # find the derivative w.r.t. each variable and create a dummy function if it does not exist
+        diffs = []  # derivatives w.r.t. the variable of each component
+        subst_vars_str = []  # the variables for which the arguments are substituted
         for i in range(len(self.arguments)):
             if self.base.has_derivative(i):
                 diffs.append(self.base.derivatives[i])
@@ -494,27 +517,64 @@ class Function(Expression):
                     diffs.append(Function.BUILTIN_FUNCTIONS[self.base.symbol].derivatives[i])
                     subst_vars_str.append(str(Function.BUILTIN_FUNCTIONS[self.base.symbol].variables[i]))
                 except KeyError:
+                    # if the derivative could not be found, create a dummy function
                     diffs.append(Function("%s_%d" % (self.base.symbol, i+1), *self.arguments))
                     subst_vars_str.append(str(FunctionBase.VAR[i]))
 
-        # plug the arguments into the variables of each differentiated function and multiply with the derivative of the corresponding component
+        # plug the arguments into the variables of each differentiated function and multiply with the derivative of the corresponding component (chain rule)
         diff_components = []
         for i in range(len(self.arguments)):
             if variable in self.arguments[i]:
-                # here False in substitute(), because trying to find derivatives is redundant, as we know they are not there by construction
+                # here False in substitute(), because trying to find derivatives is redundant, as we know they are not there by construction (the dummy functions)
                 diff_components.append(diffs[i].substitute(dict(zip(subst_vars_str, self.arguments)), False) * self.arguments[i].derivative(variable))
 
-        # add everything together
+        # add everything together (chain rule)
         if len(diff_components) > 0:
             result = diff_components[0]
             for i in range(1, len(diff_components)):
                 result += diff_components[i]
             return result
         else:
+            # the variable appeared in none of the components, so the derivative is 0
             return Constant(0)
 
     def simplify(self):
-        return Function(self.base, *[a.simplify() for a in self.arguments])
+        arguments = [a.simplify() for a in self.arguments]
+
+        # log(b, b) = 1
+        if self.base.symbol == "log":
+            if (len(arguments) == 1 and arguments[0] == Variable("e")) or\
+               (len(arguments) > 1 and arguments[0] == arguments[1]):
+                return Constant(1)
+
+            # log(exp(x)) = x
+            if len(arguments) == 1 or arguments[1] == Variable("e"):
+                if isinstance(arguments[0], Function):
+                    if arguments[0].base.symbol == "exp":
+                        return arguments[0].arguments[0].simplify()
+
+        # exp(log(x)) = x
+        if self.base.symbol == "exp":
+            if isinstance(arguments[0], Function):
+                if arguments[0].base.symbol == "log" and arguments[0].arguments[1] == Variable("e"):
+                    return arguments[0].arguments[0].simplify()
+
+        # lg(2) = 1
+        if self.base.symbol == "lg":
+            if self.arguments[0] == Constant(2):
+                return Constant(1)
+
+        # trigonometric functions composed with their inverse counterparts
+        if self.base.symbol in ["sin", "cos", "tan", "sinh", "cosh", "tanh"]:
+            if isinstance(arguments[0], Function):
+                if "a" + self.base.symbol == arguments[0].base.symbol:
+                    return arguments[0].arguments[0].simplify()
+        if self.base.symbol in ["asin", "acos", "atan", "asinh", "acosh", "atanh"]:
+            if isinstance(arguments[0], Function):
+                if self.base.symbol[1:] == arguments[0].base.symbol:
+                    return arguments[0].arguments[0].simplify()
+
+        return Function(self.base, *arguments)
 
     def __contains__(self, item):
         if item == self:
@@ -541,7 +601,7 @@ class OperatorNode(Expression):
 class UnaryNode(OperatorNode):
     """A node in the expression tree representing a prefix unary operator"""
 
-    def __init__(self, operand: Expression, op_symbol):
+    def __init__(self, operand: Expression, op_symbol: str):
         super().__init__(op_symbol, Expression.ASSOCIATIVITY[op_symbol].left, Expression.ASSOCIATIVITY[op_symbol].right, Expression.PRECEDENCE[op_symbol])
         self.operand = operand
 
@@ -629,7 +689,11 @@ class BinaryNode(OperatorNode):
 
     def __eq__(self, other):
         if type(self) == type(other):
-            return self.lhs == other.lhs and self.rhs == other.rhs
+            if self.is_commutative:
+                return (self.lhs == other.lhs and self.rhs == other.rhs) or\
+                       (self.lhs == other.rhs and self.rhs == other.lhs)
+            else:
+                return self.lhs == other.lhs and self.rhs == other.rhs
         else:
             return False
 
@@ -651,6 +715,7 @@ class BinaryNode(OperatorNode):
     def evaluate(self, substitutions_unknowns={}):
         lvalue = self.lhs.evaluate(substitutions_unknowns)
         rvalue = self.rhs.evaluate(substitutions_unknowns)
+        # parentheses are necessary in case l/r-value be a negative int/float for powers (then, e.g., (-2)**2 would be evaluated as -2**2 instead)
         return eval("(lvalue) %s (rvalue)" % self.op_symbol)
 
     def substitute(self, substitutions_unknowns, find_derivatives=True):
@@ -700,7 +765,7 @@ class BinaryNode(OperatorNode):
                 else:
                     return eval("operandsll_simpl %s rhs.rhs" % self.op_symbol)
 
-        # if all else fails, return the operation between the simplified sides
+        # if all else fails, return the operation between the (simplified) sides
         return eval("lhs %s rhs" % self.op_symbol)
 
     @staticmethod
@@ -768,10 +833,12 @@ class AdditionNode(BinaryNode):
         if lhs == rhs:
             return (Constant(2) * lhs).simplify()
 
+        # simplify according to distributivity with multiplication
         distr_simpl = BinaryNode.simplify_distributively(lhs, rhs, AdditionNode, MultiplicationNode)
         if distr_simpl is not None:
             return distr_simpl
 
+        # simplify fractions with the same denominator
         if isinstance(lhs, DivisionNode) and isinstance(rhs, DivisionNode):
             if lhs.rhs == rhs.rhs:
                 return ((lhs.lhs + rhs.lhs) / lhs.rhs).simplify()
@@ -806,10 +873,12 @@ class SubtractionNode(BinaryNode):
         if rhs == lhs:
             return Constant(0)
 
+        # simplify according to distributivity with multiplication
         distr_simpl = BinaryNode.simplify_distributively(lhs, rhs, SubtractionNode, MultiplicationNode)
         if distr_simpl is not None:
             return distr_simpl
 
+        # simplify fractions with the same denominator
         if isinstance(lhs, DivisionNode) and isinstance(rhs, DivisionNode):
             if lhs.rhs == rhs.rhs:
                 return ((lhs.lhs - rhs.lhs) / lhs.rhs).simplify()
@@ -866,7 +935,7 @@ class MultiplicationNode(BinaryNode):
         if lhs == rhs:
             return (lhs ** Constant(2)).simplify()
 
-        # product of two powers adds the powers
+        # product of two exponentiations yields addition of the exponents
         distr_simpl = BinaryNode.simplify_distributively(lhs, rhs, AdditionNode, PowerNode, True, False)
         if distr_simpl is not None:
             return distr_simpl
@@ -881,7 +950,7 @@ class DivisionNode(BinaryNode):
         op_symbol = Expression.OPERATOR_LIST["Division"]
         super().__init__(lhs, rhs, op_symbol, Expression.COMMUTATIVITY[op_symbol])
 
-    def derivative(self, variable: Variable):
+    def derivative(self, variable):
         if isinstance(variable, str):
             variable = Variable(variable)
 
@@ -895,7 +964,7 @@ class DivisionNode(BinaryNode):
 
         # dividing by 0 is impossible
         if rhs == Constant(0):
-            raise ZeroDivisionError()
+            raise ZeroDivisionError("right-hand side of the following expression is zero: %s" % self)
 
         # 0 divided by anything non-zero is 0
         if lhs == Constant(0):
@@ -905,7 +974,12 @@ class DivisionNode(BinaryNode):
         if rhs == Constant(1):
             return lhs
 
-        # do not evaluate division by two integers (as in super().simplify()) but simplify the fraction
+        # dividing the same things yields 1
+        if lhs == rhs:
+            return Constant(1)
+
+        # do not evaluate division by two integers (as in super().simplify()), but simplify the fraction,
+        # lest we get long floats such as 0.3333333333333333 instead of 1/3
         if isinstance(lhs, Constant) and isinstance(rhs, Constant):
             if isinstance(lhs.value, int) and isinstance(rhs.value, int):
                 gcd = math.gcd(lhs.value, rhs.value)
@@ -917,7 +991,7 @@ class DivisionNode(BinaryNode):
         # take negation outside of a fraction to simplify with other operators
         if isinstance(lhs, NegationNode):
             if isinstance(rhs, NegationNode):
-                # divide two negatives yields positives
+                # dividing two negatives yields positives
                 return (lhs.operand / rhs.operand).simplify()
             else:
                 return (-(lhs.operand / rhs)).simplify()
@@ -937,7 +1011,7 @@ class DivisionNode(BinaryNode):
             if isinstance(rhs.rhs, NegationNode):
                 return (lhs * (rhs.lhs ** rhs.rhs.operand)).simplify()
 
-        # division of two powers adds the powers
+        # division of two exponentiations yields subtraction of the exponents
         distr_simpl = BinaryNode.simplify_distributively(lhs, rhs, SubtractionNode, PowerNode, True, False)
         if distr_simpl is not None:
             return distr_simpl
@@ -972,7 +1046,7 @@ class PowerNode(BinaryNode):
         if rhs == Constant(0):
             return Constant(1)
 
-        # raising 0 or 1 to any power remains 0 or 1 respectively; raising to the power 1 does nothing
+        # raising 0 or 1 to any power remains 0 or 1, respectively; raising to the power 1 does nothing
         if lhs == Constant(0) or lhs == Constant(1) or rhs == Constant(1):
             return lhs
 
