@@ -124,6 +124,76 @@ class Expression:
     def __neg__(self):
         return ~self
 
+    # evaluate the expression with values for variables and functions with a dictionary
+    # keys are variables as strings with concrete values
+    # keys are function names as strings with FunctionBase as values
+    def evaluate(self, substitutions_unknowns={}):
+        raise NotImplementedError("evaluation for the following expression was not possible: %s" % self)
+
+    # substitute expressions for variables and functions with a dictionary
+    # keys of variables are strings with Expressions as values
+    # keys of functions are strings with values either:
+    #     a tuple with first an Expression and then a list of variables used
+    #     just an Expression, provided it use FunctionBase.VAR as its variables
+    def substitute(self, substitutions_unknowns, find_derivatives=True):
+        return self
+
+    # variable can either be a string or of type Variable
+    def derivative(self, variable):
+        if isinstance(variable, str):
+            variable = Variable(variable)
+
+        if variable not in self:
+            return Constant(0)
+
+        raise NotImplementedError("the following expression could not be differentiated: %s" % self)
+
+    def integral(self, variable):
+        if isinstance(variable, str):
+            variable = Variable(variable)
+
+        if variable not in self:
+            return self * variable
+
+        raise NotImplementedError("the following expression could not be integrated: %s" % self)
+
+    def simplify(self):
+        return self
+
+    def __contains__(self, item):
+        return item == self
+
+    # remaining methods
+
+    # compute integral numerically on [lower_bound, upper_bound] w.r.t. variable.
+    # variable can be a string or of type Variable
+    # substitutions_unknowns works the same as in evaluate()
+    def numeric_integral(self, variable, lower_bound, upper_bound, step_count, substitutions_unknowns=None):
+        if substitutions_unknowns is None:
+            substitutions_unknowns = {}
+
+        if isinstance(variable, Variable):
+            variable = variable.symbol
+        if variable in substitutions_unknowns:
+            raise KeyError("integration variable '%s' is substituted" % variable)
+
+        step_size = (upper_bound - lower_bound) / step_count
+        # make a partition of points for a middle Riemann sum
+        partition = [lower_bound + step_size / 2 + step_size * i for i in range(step_count)]
+        summation = 0
+        for s in partition:
+            substitutions_unknowns.update({variable: s})
+            summation += step_size * self.evaluate(substitutions_unknowns)
+        return summation
+
+    # checks if self is of the form a*variable + b for non-zero a
+    def is_linear(self, variable):
+        if isinstance(variable, str):
+            variable = Variable(variable)
+
+        der = self.derivative(variable).simplify()
+        return (not der == Constant(0)) and variable not in der
+
     # basic Shunting-yard algorithm
     @staticmethod
     def from_string(string):
@@ -234,51 +304,6 @@ class Expression:
         # the resulting expression tree is what's left on the stack
         return stack[0]
 
-    # evaluate the expression with values for variables and functions with a dictionary
-    # keys are variables as strings with concrete values
-    # keys are function names as strings with FunctionBase as values
-    def evaluate(self, substitutions_unknowns={}):
-        raise NotImplementedError("evaluation for the following expression was not possible: %s" % self)
-
-    # substitute expressions for variables and functions with a dictionary
-    # keys of variables are strings with Expressions as values
-    # keys of functions are strings with values either:
-    #     a tuple with first an Expression and then a list of variables used
-    #     just an Expression, provided it use FunctionBase.VAR as its variables
-    def substitute(self, substitutions_unknowns, find_derivatives=True):
-        return self
-
-    # variable can either be a string or of type Variable
-    def derivative(self, variable):
-        raise NotImplementedError("the following expression could not be differentiated: %s" % self)
-
-    # compute integral numerically on [lower_bound, upper_bound] w.r.t. variable.
-    # variable can be a string or of type Variable
-    # substitutions_unknowns works the same as in evaluate()
-    def numeric_integral(self, variable, lower_bound, upper_bound, step_count, substitutions_unknowns=None):
-        if substitutions_unknowns is None:
-            substitutions_unknowns = {}
-
-        if isinstance(variable, Variable):
-            variable = variable.symbol
-        if variable in substitutions_unknowns:
-            raise KeyError("integration variable '%s' is substituted" % variable)
-
-        step_size = (upper_bound - lower_bound) / step_count
-        # make a partition of points for a middle Riemann sum
-        partition = [lower_bound + step_size / 2 + step_size * i for i in range(step_count)]
-        summation = 0
-        for s in partition:
-            substitutions_unknowns.update({variable: s})
-            summation += step_size * self.evaluate(substitutions_unknowns)
-        return summation
-
-    def simplify(self):
-        return self
-
-    def __contains__(self, item):
-        return item == self
-
 
 class Constant(Expression):
     """Represents a constant value"""
@@ -297,9 +322,6 @@ class Constant(Expression):
 
     def evaluate(self, substitutions_unknowns={}):
         return self.value
-
-    def derivative(self, variable):
-        return Constant(0)
 
     def simplify(self):
         # set negative constants to negated positive ones for further simplifications
@@ -361,6 +383,15 @@ class Variable(Expression):
             return Constant(1)
         else:
             return Constant(0)
+
+    def integral(self, variable):
+        if isinstance(variable, str):
+            variable = Variable(variable)
+
+        if variable == self:
+            return self ** 2 / 2
+        else:
+            return self * variable
 
     def __contains__(self, item):
         if isinstance(item, str):
@@ -516,7 +547,7 @@ class Function(Expression):
                 try:
                     diffs.append(Function.BUILTIN_FUNCTIONS[self.base.symbol].derivatives[i])
                     subst_vars_str.append(str(Function.BUILTIN_FUNCTIONS[self.base.symbol].variables[i]))
-                except KeyError:
+                except (KeyError, IndexError):
                     # if the derivative could not be found, create a dummy function
                     diffs.append(Function("%s_%d" % (self.base.symbol, i+1), *self.arguments))
                     subst_vars_str.append(str(FunctionBase.VAR[i]))
@@ -537,6 +568,8 @@ class Function(Expression):
         else:
             # the variable appeared in none of the components, so the derivative is 0
             return Constant(0)
+
+    # TODO: implement integral()
 
     def simplify(self):
         arguments = [a.simplify() for a in self.arguments]
@@ -626,13 +659,6 @@ class UnaryNode(OperatorNode):
         value = self.operand.substitute(substitutions_unknowns)
         return eval("%svalue" % self.op_symbol)
 
-    def derivative(self, variable):
-        if isinstance(variable, str):
-            variable = Variable(variable)
-
-        der = self.operand.derivative(variable)
-        return eval("%sder" % self.op_symbol)
-
     def simplify(self, operand=None):
         if operand is None:
             operand = self.operand.simplify()
@@ -661,9 +687,13 @@ class NegationNode(UnaryNode):
         if isinstance(variable, str):
             variable = Variable(variable)
 
-        # use ‘-’ instead of ‘~’ for the derivative of the operand could be a float or int
-        der = self.operand.derivative(variable)
-        return eval("-der")
+        return -self.operand.derivative(variable)
+
+    def integral(self, variable):
+        if isinstance(variable, str):
+            variable = Variable(variable)
+
+        return -self.operand.integral(variable)
 
     def simplify(self):
         operand = self.operand.simplify()
@@ -818,6 +848,12 @@ class AdditionNode(BinaryNode):
         op_symbol = Expression.OPERATOR_LIST["Addition"]
         super().__init__(lhs, rhs, op_symbol, Expression.COMMUTATIVITY[op_symbol])
 
+    def integral(self, variable):
+        if isinstance(variable, str):
+            variable = Variable(variable)
+
+        return self.lhs.integral(variable) + self.rhs.integral(variable)
+
     def simplify(self):
         lhs = self.lhs.simplify()
         rhs = self.rhs.simplify()
@@ -855,6 +891,12 @@ class SubtractionNode(BinaryNode):
     def __init__(self, lhs, rhs):
         op_symbol = Expression.OPERATOR_LIST["Subtraction"]
         super().__init__(lhs, rhs, op_symbol, Expression.COMMUTATIVITY[op_symbol])
+
+    def integral(self, variable):
+        if isinstance(variable, str):
+            variable = Variable(variable)
+
+        return self.lhs.integral(variable) - self.rhs.integral(variable)
 
     def simplify(self):
         lhs = self.lhs.simplify()
@@ -903,6 +945,17 @@ class MultiplicationNode(BinaryNode):
         lderiv = self.lhs.derivative(variable)
         rderiv = self.rhs.derivative(variable)
         return lderiv * self.rhs + self.lhs * rderiv
+
+    def integral(self, variable):
+        if isinstance(variable, str):
+            variable = Variable(variable)
+
+        if variable not in self.lhs:
+            return self.lhs * self.rhs.integral(variable)
+        elif variable not in self.rhs:
+            return self.lhs.integral(variable) * self.rhs
+
+        return super().integral(variable)
 
     def simplify(self):
         lhs = self.lhs.simplify()
@@ -960,6 +1013,20 @@ class DivisionNode(BinaryNode):
         lderiv = self.lhs.derivative(variable)
         rderiv = self.rhs.derivative(variable)
         return (lderiv * self.rhs - self.lhs * rderiv) / self.rhs ** Constant(2)
+
+    def integral(self, variable):
+        if isinstance(variable, str):
+            variable = Variable(variable)
+
+        if variable not in self.rhs:
+            return self.lhs.integral(variable) * self.rhs
+
+        if variable not in self.lhs:
+            if self.rhs == variable:
+                return self.lhs * Function("log", Function("abs", variable))
+
+            if isinstance(self.rhs, PowerNode):
+                return self.lhs * (self.rhs.lhs ** -self.rhs.rhs).integral(variable)
 
     def simplify(self):
         lhs = self.lhs.simplify()
@@ -1041,6 +1108,23 @@ class PowerNode(BinaryNode):
 
         return self * (self.rhs.derivative(variable) * Function("log", self.lhs) + self.rhs * self.lhs.derivative(variable) / self.lhs)
 
+    def integral(self, variable):
+        if isinstance(variable, str):
+            variable = Variable(variable)
+
+        if variable not in self.rhs:
+            if self.lhs.is_linear(variable):
+                if self.rhs == -Constant(1):
+                    return Function("log", Function("abs", self.lhs)) / self.lhs.derivative(variable)
+                else:
+                    return self.lhs ** (self.rhs + Constant(1)) / (self.rhs + Constant(1)) / self.lhs.derivative(variable)
+
+        if variable not in self.lhs:
+            if self.rhs.is_linear(variable):
+                return self / Function("log", self.lhs) / self.rhs.derivative(variable)
+
+        super().integral(variable)
+
     def simplify(self):
         lhs = self.lhs.simplify()
         rhs = self.rhs.simplify()
@@ -1062,6 +1146,15 @@ class PowerNode(BinaryNode):
         # negative powers is division by the positive power
         if isinstance(rhs, NegationNode):
             return (Constant(1) / lhs ** rhs.operand).simplify()
+
+        # simplify negated bases if the exponent is an integer
+        if isinstance(lhs, NegationNode):
+            if isinstance(rhs, Constant):
+                if float(rhs).is_integer():
+                    if int(rhs.value) % 2 == 0:
+                        return (lhs.operand ** rhs).simplify()
+                    else:
+                        return (-(lhs.operand ** rhs)).simplify()
 
         # a power of a power is the product of the powers (with some adjustments for powers of negatives)
         if isinstance(lhs, PowerNode):
