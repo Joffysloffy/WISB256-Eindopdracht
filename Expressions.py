@@ -773,7 +773,7 @@ class BinaryNode(OperatorNode):
 
         # evaluate operations between two constants
         if isinstance(lhs, Constant) and isinstance(rhs, Constant):
-            return Constant(eval("%s %s %s" % (lhs.value, self.op_symbol, rhs.value)))
+            return Constant(eval("%s %s %s" % (lhs.value, self.op_symbol, rhs.value))).simplify()
 
         # attempt to simplify two consecutive same-precedence operators by reorganizing the expression tree
         # e.g., if a*b/c does not simplify, try (a/c)*b and then a*(b/c)
@@ -814,6 +814,7 @@ class BinaryNode(OperatorNode):
                         return eval("operandsll_simpl %s rhs.rhs" % rhs.op_symbol).simplify()
 
         # if all else fails, return the operation between the (simplified) sides
+
         return eval("lhs %s rhs" % self.op_symbol)
 
     @staticmethod
@@ -876,6 +877,8 @@ class AdditionNode(BinaryNode):
         # adding a negative is subtraction
         if isinstance(rhs, NegationNode):
             return (lhs - rhs.operand).simplify()
+        if isinstance(lhs, NegationNode):
+            return (rhs - lhs.operand).simplify()
 
         # 0 is a unit w.r.t +
         if lhs == Constant(0):
@@ -932,6 +935,17 @@ class SubtractionNode(BinaryNode):
         # subtracting the same elements is 0
         if rhs == lhs:
             return Constant(0)
+
+        # handle the special cases x-a-b, a-(x±b) and a-(b±x) when a+b simplifies
+        if isinstance(lhs, SubtractionNode):
+            operandsrr = lhs.rhs + rhs
+            operandsrr_simpl = operandsrr.simplify()
+            if not operandsrr == operandsrr_simpl:
+                return (lhs.lhs - operandsrr_simpl).simplify()
+        if isinstance(rhs, SubtractionNode):
+            return (lhs - rhs.lhs + rhs.rhs).simplify()
+        if isinstance(rhs, AdditionNode):
+            return (lhs - rhs.lhs - rhs.rhs).simplify()
 
         # simplify according to distributivity with multiplication
         distr_simpl = BinaryNode.simplify_distributively(lhs, rhs, SubtractionNode, MultiplicationNode)
@@ -1211,7 +1225,3 @@ Function.BUILTIN_FUNCTIONS = {"sin": FunctionBase("sin", math.sin, Function("cos
                               }
 
 
-expr = Expression.from_string("1+2*x+3*x**2+4*x**3")
-print(expr)
-print(expr.integral("x").simplify())
-print(Expression.from_string("x/3/3").simplify())
