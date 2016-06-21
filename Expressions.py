@@ -421,51 +421,38 @@ class FunctionBase:
 
         # of type Expression
         if derivatives is None:
-            self._derivatives = []
+            self.derivatives = []
         elif not isinstance(derivatives, list):
-            self._derivatives = [derivatives]
+            self.derivatives = [derivatives]
         else:
-            self._derivatives = derivatives
+            self.derivatives = derivatives
 
         # of type Expression
         if integrals is None:
-            self._integrals = []
+            self.integrals = []
         elif not isinstance(integrals, list):
-            self._integrals = [integrals]
+            self.integrals = [integrals]
         else:
-            self._integrals = integrals
+            self.integrals = integrals
 
+        # of type Variable
         if variables is None:
-            self.variables = FunctionBase.VAR[0:len(self._derivatives)]
+            self.variables = FunctionBase.VAR[0:len(self.derivatives)]
+        elif not isinstance(variables, list):
+            self.variables = [variables]
         else:
             self.variables = list(variables)  # the variables to be substituted in self.derivative, in order
 
-    # TODO: implement integral
-
-    @property
-    def derivatives(self):
-        if self._derivatives == []:
-            return [Function(FunctionBase(self.symbol + "_1"))]
-        else:
-            return self._derivatives
-
     def has_derivative(self, index=0):
         try:
-            self._derivatives[index]
+            self.derivatives[index]
             return True
         except IndexError:
             return False
 
-    @property
-    def integrals(self):
-        if self._integrals == []:
-            return [Function(FunctionBase(self.symbol + "^1"))]
-        else:
-            return self._integrals
-
     def has_integral(self, index=0):
         try:
-            self._integrals[index]
+            self.integrals[index]
             return True
         except IndexError:
             return False
@@ -511,7 +498,6 @@ class Function(Expression):
                 raise KeyError("function '%s' was unspecified" % self.base.symbol) from e
         return f(*[a.evaluate(substitutions_unknowns) for a in self.arguments])
 
-    # TODO: add support for undefined integrals
     def substitute(self, substitutions_unknowns, find_derivatives=True):
         try:
             # allow for the use of the default variables VAR
@@ -520,7 +506,7 @@ class Function(Expression):
                 (f, variables) = val
             else:
                 f = val
-                variables = [str(FunctionBase.VAR[i]) for i in range(len(self.arguments))]
+                variables = [str(FunctionBase.VAR[k]) for k in range(len(self.arguments))]
             f_var_subst = dict(zip(variables, [a.substitute(substitutions_unknowns) for a in self.arguments]))
             return f.substitute(f_var_subst)
         except KeyError:
@@ -546,11 +532,40 @@ class Function(Expression):
                         (f, variables) = val
                     else:
                         f = val
-                        variables = [str(FunctionBase.VAR[i]) for i in range(len(self.arguments))]
+                        variables = [str(FunctionBase.VAR[k]) for k in range(len(self.arguments))]
                     # repeatedly take the correct derivative to get back to the unknown derivative, where we started
                     # also keep substituting in case there are nested functions of which we found newly unknown derivatives
                     while len(var_index_stack) > 0:
                         f = f.derivative(variables[var_index_stack.pop()]).substitute(substitutions_unknowns)
+                    f_var_subst = dict(zip(variables, [a.substitute(substitutions_unknowns) for a in self.arguments]))
+                    return f.substitute(f_var_subst)
+
+                # attempt to find a provided function of which this is some integral
+                fn_name = self.base.symbol
+                var_index_stack = []
+                while fn_name not in substitutions_unknowns:
+                    i = fn_name.rfind("^")
+                    if i > 0:
+                        # get the index of the variable with respect to which the integral was taken (e.g., f^j -> j-1)
+                        try:
+                            var_index_stack.append(int(fn_name[i+1:]) - 1)
+                        except ValueError:
+                            break
+                        # get the name of the original function (e.g., f^j -> f)
+                        fn_name = fn_name[:i]
+                    else:
+                        break
+                else:
+                    val = substitutions_unknowns[fn_name]
+                    if isinstance(val, tuple):
+                        (f, variables) = val
+                    else:
+                        f = val
+                        variables = [str(FunctionBase.VAR[k]) for k in range(len(self.arguments))]
+                    # repeatedly attempt to integrate to get back to the unknown integral, where we started
+                    # also keep substituting in case there are nested functions of which we found newly unknown integrals
+                    while len(var_index_stack) > 0:
+                        f = f.integral(variables[var_index_stack.pop()]).substitute(substitutions_unknowns)
                     f_var_subst = dict(zip(variables, [a.substitute(substitutions_unknowns) for a in self.arguments]))
                     return f.substitute(f_var_subst)
 
@@ -603,6 +618,7 @@ class Function(Expression):
     def integral(self, variable):
         if isinstance(variable, str):
             variable = Variable(variable)
+
         args_with_var = []
         index = -1
         for i in range(len(self.arguments)):
@@ -636,7 +652,6 @@ class Function(Expression):
 
         return super().integral(variable)
 
-    # TODO: simplify derivatives and integrals (e.g., f_1^1 -> f)
     def simplify(self):
         arguments = [a.simplify() for a in self.arguments]
 
@@ -673,7 +688,34 @@ class Function(Expression):
                 if self.base.symbol[1:] == arguments[0].base.symbol:
                     return arguments[0].arguments[0].simplify()
 
-        return Function(self.base, *arguments)
+        # cancel derivatives against integrals and vice versa (e.g., f_1^1 -> f)
+        # convert the function name to a list
+        values_str = {}
+        index = 0
+        for c in self.base.symbol:
+            if c == "_":
+                index += 1
+                continue
+            if c == "^":
+                index += 1
+                c = "-"
+            values_str[index] = values_str.get(index, "") + c
+        # take the values, discarding the first one as that is the base function name, and convert it to ints
+        values = [int(c) for c in list(values_str.values())[1:]]
+
+        # remove the indices that cancel each other out
+        while True:
+            for i in range(len(values) - 1):
+                if values[i] + values[i+1] == 0:
+                    values = values[0:i] + values[i+2:]
+                    break
+            else:
+                break
+
+        # convert the values back to a proper function name
+        base = values_str[0] + "".join([("_" if i > 0 else "^") + str(abs(i)) for i in values])
+
+        return Function(base, *arguments)
 
     def __contains__(self, item):
         if item == self:
@@ -1111,6 +1153,8 @@ class DivisionNode(BinaryNode):
             if isinstance(self.rhs, PowerNode):
                 return self.lhs * (self.rhs.lhs ** -self.rhs.rhs).integral(variable)
 
+        return super().integral(variable)
+
     def simplify(self):
         lhs = self.lhs.simplify()
         rhs = self.rhs.simplify()
@@ -1206,7 +1250,7 @@ class PowerNode(BinaryNode):
             if self.rhs.is_linear(variable):
                 return self / Function("log", self.lhs) / self.rhs.derivative(variable)
 
-        super().integral(variable)
+        return super().integral(variable)
 
     def simplify(self):
         lhs = self.lhs.simplify()
@@ -1295,9 +1339,3 @@ Function.BUILTIN_FUNCTIONS = {"sin": FunctionBase("sin", math.sin, Function("cos
                               }
 
 
-# f = Expression.from_string("{0}**2+{1}".format(*FunctionBase.VAR[:2]))
-# print(Expression.from_string("f(a*x+b, c*y+d)").derivative("x").simplify().integral("x").simplify())
-string = "sqrt(x)"
-print(Expression.from_string(string))
-print(Expression.from_string(string).integral("x").simplify())
-print(Expression.from_string(string).integral("x").simplify().derivative("x").simplify())
