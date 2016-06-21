@@ -389,7 +389,7 @@ class Variable(Expression):
             variable = Variable(variable)
 
         if variable == self:
-            return self ** 2 / 2
+            return self ** Constant(2) / Constant(2)
         else:
             return self * variable
 
@@ -717,6 +717,9 @@ class BinaryNode(OperatorNode):
         self.lhs = lhs
         self.rhs = rhs
         self.is_commutative = is_commutative
+
+        if isinstance(self.lhs, int) or isinstance(self.rhs, int):
+            print("one side int:", self)
 
     def __eq__(self, other):
         if type(self) == type(other):
@@ -1196,3 +1199,7 @@ Function.BUILTIN_FUNCTIONS = {"sin": FunctionBase("sin", math.sin, Function("cos
                               }
 
 
+expr = Expression.from_string("1+2*x+3*x**2+4*x**3")
+print(expr)
+print(expr.integral("x").simplify())
+print(Expression.from_string("3+x**4-3").simplify())
