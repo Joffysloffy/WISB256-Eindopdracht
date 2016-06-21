@@ -146,7 +146,7 @@ class Expression:
         if variable not in self:
             return Constant(0)
 
-        raise NotImplementedError("the following expression could not be differentiated: %s" % self)
+        raise NotImplementedError("the following expression could not be differentiated: %s w.r.t. %s" % (self, variable))
 
     def integral(self, variable):
         if isinstance(variable, str):
@@ -155,7 +155,7 @@ class Expression:
         if variable not in self:
             return self * variable
 
-        raise NotImplementedError("the following expression could not be integrated: %s" % self)
+        raise NotImplementedError("the following expression could not be integrated: %s w.r.t. %s" % (self, variable))
 
     def simplify(self):
         return self
@@ -415,7 +415,7 @@ class FunctionBase:
                 return Variable("__VAR%d__" % key)
     VAR = VARGetter("__VAR0__")
 
-    def __init__(self, symbol: str, executable=None, derivatives=None, variables=None):
+    def __init__(self, symbol: str, executable=None, derivatives=None, integrals=None, variables=None):
         self.symbol = symbol
         self.executable = executable  # a Python function/method
 
@@ -427,10 +427,20 @@ class FunctionBase:
         else:
             self._derivatives = derivatives
 
+        # of type Expression
+        if integrals is None:
+            self._integrals = []
+        elif not isinstance(integrals, list):
+            self._integrals = [integrals]
+        else:
+            self._integrals = integrals
+
         if variables is None:
             self.variables = FunctionBase.VAR[0:len(self._derivatives)]
         else:
             self.variables = list(variables)  # the variables to be substituted in self.derivative, in order
+
+    # TODO: implement integral
 
     @property
     def derivatives(self):
@@ -442,6 +452,20 @@ class FunctionBase:
     def has_derivative(self, index=0):
         try:
             self._derivatives[index]
+            return True
+        except IndexError:
+            return False
+
+    @property
+    def integrals(self):
+        if self._integrals == []:
+            return [Function(FunctionBase(self.symbol + "^1"))]
+        else:
+            return self._integrals
+
+    def has_integral(self, index=0):
+        try:
+            self._integrals[index]
             return True
         except IndexError:
             return False
@@ -487,6 +511,7 @@ class Function(Expression):
                 raise KeyError("function '%s' was unspecified" % self.base.symbol) from e
         return f(*[a.evaluate(substitutions_unknowns) for a in self.arguments])
 
+    # TODO: add support for undefined integrals
     def substitute(self, substitutions_unknowns, find_derivatives=True):
         try:
             # allow for the use of the default variables VAR
@@ -539,6 +564,7 @@ class Function(Expression):
         # find the derivative w.r.t. each variable and create a dummy function if it does not exist
         diffs = []  # derivatives w.r.t. the variable of each component
         subst_vars_str = []  # the variables for which the arguments are substituted
+        dummy_indices = []
         for i in range(len(self.arguments)):
             if self.base.has_derivative(i):
                 diffs.append(self.base.derivatives[i])
@@ -551,13 +577,18 @@ class Function(Expression):
                     # if the derivative could not be found, create a dummy function
                     diffs.append(Function("%s_%d" % (self.base.symbol, i+1), *self.arguments))
                     subst_vars_str.append(str(FunctionBase.VAR[i]))
+                    dummy_indices.append(i)
 
         # plug the arguments into the variables of each differentiated function and multiply with the derivative of the corresponding component (chain rule)
         diff_components = []
         for i in range(len(self.arguments)):
             if variable in self.arguments[i]:
-                # here False in substitute(), because trying to find derivatives is redundant, as we know they are not there by construction (the dummy functions)
-                diff_components.append(diffs[i].substitute(dict(zip(subst_vars_str, self.arguments)), False) * self.arguments[i].derivative(variable))
+                if i in dummy_indices:
+                    # dummy functions already have the arguments plugged in
+                    diff_components.append(diffs[i] * self.arguments[i].derivative(variable))
+                else:
+                    # here False in substitute(), because trying to find derivatives is redundant, as we know they are not there by construction (the dummy functions)
+                    diff_components.append(diffs[i].substitute(dict(zip(subst_vars_str, self.arguments)), False) * self.arguments[i].derivative(variable))
 
         # add everything together (chain rule)
         if len(diff_components) > 0:
@@ -569,8 +600,43 @@ class Function(Expression):
             # the variable appeared in none of the components, so the derivative is 0
             return Constant(0)
 
-    # TODO: implement integral()
+    def integral(self, variable):
+        if isinstance(variable, str):
+            variable = Variable(variable)
+        args_with_var = []
+        index = -1
+        for i in range(len(self.arguments)):
+            if variable in self.arguments[i]:
+                args_with_var.append(self.arguments[i])
+                index = i
+        # we can generally only integrate if one argument contains the variable
+        if len(args_with_var) == 1:
+            arg = args_with_var[0]
+            subst_var_str = []
+            is_dummy = False
+            if arg.is_linear(variable):
+                integral = None
+                if self.base.has_integral(index):
+                    integral = self.base.integrals[index]
+                    subst_var_str = [str(v) for v in self.base.variables]
+                else:
+                    try:
+                        integral = Function.BUILTIN_FUNCTIONS[self.base.symbol].integrals[index]
+                        subst_var_str = [str(v) for v in FunctionBase.VAR[:len(self.arguments)]]
+                    except (KeyError, IndexError):
+                        # create a dummy function f^(index+1)
+                        integral = Function("%s^%d" % (self.base.symbol, index+1), *self.arguments)
+                        is_dummy = True
 
+                # substitute the variables and multiply with the derivative of the argument containing variable
+                if is_dummy:
+                    return integral / arg.derivative(variable)
+                else:
+                    return integral.substitute(dict(zip(subst_var_str, self.arguments))) / arg.derivative(variable)
+
+        return super().integral(variable)
+
+    # TODO: simplify derivatives and integrals (e.g., f_1^1 -> f)
     def simplify(self):
         arguments = [a.simplify() for a in self.arguments]
 
@@ -690,9 +756,6 @@ class NegationNode(UnaryNode):
         return -self.operand.derivative(variable)
 
     def integral(self, variable):
-        if isinstance(variable, str):
-            variable = Variable(variable)
-
         return -self.operand.integral(variable)
 
     def simplify(self):
@@ -758,9 +821,6 @@ class BinaryNode(OperatorNode):
         return eval("lvalue %s rvalue" % self.op_symbol)
 
     def derivative(self, variable):
-        if isinstance(variable, str):
-            variable = Variable(variable)
-
         lvalue = self.lhs.derivative(variable)
         rvalue = self.rhs.derivative(variable)
         return eval("lvalue %s rvalue" % self.op_symbol)
@@ -865,9 +925,6 @@ class AdditionNode(BinaryNode):
         super().__init__(lhs, rhs, op_symbol, Expression.COMMUTATIVITY[op_symbol])
 
     def integral(self, variable):
-        if isinstance(variable, str):
-            variable = Variable(variable)
-
         return self.lhs.integral(variable) + self.rhs.integral(variable)
 
     def simplify(self):
@@ -911,9 +968,6 @@ class SubtractionNode(BinaryNode):
         super().__init__(lhs, rhs, op_symbol, Expression.COMMUTATIVITY[op_symbol])
 
     def integral(self, variable):
-        if isinstance(variable, str):
-            variable = Variable(variable)
-
         return self.lhs.integral(variable) - self.rhs.integral(variable)
 
     def simplify(self):
@@ -1201,27 +1255,49 @@ class PowerNode(BinaryNode):
         return super().simplify(lhs, rhs)
 
 
-Function.BUILTIN_FUNCTIONS = {"sin": FunctionBase("sin", math.sin, Function("cos")),
-                              "cos": FunctionBase("cos", math.cos, -Function("sin")),
-                              "tan": FunctionBase("tan", math.tan, Constant(1) + Function("tan")**Constant(2)),
-                              "asin": FunctionBase("asin", math.asin, Constant(1) / Function("sqrt", Constant(1) - FunctionBase.VAR**Constant(2))),
-                              "acos": FunctionBase("acos", math.acos, Constant(-1) / Function("sqrt", Constant(1) - FunctionBase.VAR**Constant(2))),
-                              "atan": FunctionBase("atan", math.atan, Constant(1) / (FunctionBase.VAR**Constant(2) + Constant(1))),
+Function.BUILTIN_FUNCTIONS = {"sin": FunctionBase("sin", math.sin, Function("cos"),
+                                                                   -Function("cos")),
+                              "cos": FunctionBase("cos", math.cos, -Function("sin"),
+                                                                   Function("sin")),
+                              "tan": FunctionBase("tan", math.tan, Constant(1) + Function("tan")**Constant(2),
+                                                                   -Function("log", Function("cos"))),
+                              "asin": FunctionBase("asin", math.asin, Constant(1) / Function("sqrt", Constant(1) - FunctionBase.VAR**Constant(2)),
+                                                                      Function("sqrt", Constant(1) - FunctionBase.VAR**Constant(2)) + FunctionBase.VAR * Function("asin")),
+                              "acos": FunctionBase("acos", math.acos, -Constant(1) / Function("sqrt", Constant(1) - FunctionBase.VAR**Constant(2)),
+                                                                      FunctionBase.VAR * Function("acos") - Function("sqrt", Constant(1) - FunctionBase.VAR**Constant(2))),
+                              "atan": FunctionBase("atan", math.atan, Constant(1) / (FunctionBase.VAR**Constant(2) + Constant(1)),
+                                                                      FunctionBase.VAR * Function("atan") - Function("log", FunctionBase.VAR**Constant(2) + Constant(1)) / Constant(2)),
                               "atan2": FunctionBase("atan2", math.atan2),  # atan2(y, x)
-                              "sinh": FunctionBase("sinh", math.sinh, Function("cosh")),
-                              "cosh": FunctionBase("cosh", math.cosh, Function("sinh")),
-                              "tanh": FunctionBase("tanh", math.tanh, Constant(1) - Function("tanh")**Constant(2)),
-                              "asinh": FunctionBase("asinh", math.asinh, Constant(1) / Function("sqrt", FunctionBase.VAR**Constant(2) + Constant(1))),
-                              "acosh": FunctionBase("acosh", math.acosh, Constant(1) / Function("sqrt", FunctionBase.VAR**Constant(2) - Constant(1))),
-                              "atanh": FunctionBase("atanh", math.atanh, Constant(1) / (Constant(1) - FunctionBase.VAR**Constant(2))),
-                              "log": FunctionBase("log", math.log, [Constant(1) / (FunctionBase.VAR * Function("log", Variable("e"))), Constant(0)], [FunctionBase.VAR, Variable("e")]),  # log(x, base=e)
-                              "lg": FunctionBase("lg", math.log2, Constant(1) / (FunctionBase.VAR * Function("log", Constant(2)))),
-                              "exp": FunctionBase("exp", math.exp, Function("exp")),
+                              "sinh": FunctionBase("sinh", math.sinh, Function("cosh"),
+                                                                      Function("cosh")),
+                              "cosh": FunctionBase("cosh", math.cosh, Function("sinh"),
+                                                                      Function("sinh")),
+                              "tanh": FunctionBase("tanh", math.tanh, Constant(1) - Function("tanh")**Constant(2),
+                                                                      Function("log", Function("cosh"))),
+                              "asinh": FunctionBase("asinh", math.asinh, Constant(1) / Function("sqrt", FunctionBase.VAR**Constant(2) + Constant(1)),
+                                                                         FunctionBase.VAR * Function("asinh") - Function("sqrt", FunctionBase.VAR**Constant(2) + Constant(1))),
+                              "acosh": FunctionBase("acosh", math.acosh, Constant(1) / Function("sqrt", FunctionBase.VAR**Constant(2) - Constant(1)),
+                                                                         FunctionBase.VAR * Function("acosh") - Function("sqrt", FunctionBase.VAR**Constant(2) - Constant(1))),
+                              "atanh": FunctionBase("atanh", math.atanh, Constant(1) / (Constant(1) - FunctionBase.VAR**Constant(2)),
+                                                                         FunctionBase.VAR * Function("atanh") + Function("log", Constant(1) - FunctionBase.VAR**Constant(2)) / Constant(2)),
+                              "log": FunctionBase("log", math.log, [Constant(1) / (FunctionBase.VAR * Function("log", Variable("e"))), Constant(0)],
+                                                                   [FunctionBase.VAR * (Function("log") - Constant(1)) / Function("log", Variable("e")), Constant(0)], [FunctionBase.VAR, Variable("e")]),  # log(x, base=e)
+                              "lg": FunctionBase("lg", math.log2, Constant(1) / (FunctionBase.VAR * Function("log", Constant(2))),
+                                                                  FunctionBase.VAR * (Function("log") - Constant(1)) / Function("log", Constant(2))),
+                              "exp": FunctionBase("exp", math.exp, Function("exp"),
+                                                                   Function("exp")),
                               "ceil": FunctionBase("ceil", math.ceil),
                               "floor": FunctionBase("floor", math.floor),
                               "factorial": FunctionBase("factorial", math.factorial),
                               "abs": FunctionBase("abs", math.fabs),
-                              "sqrt": FunctionBase("sqrt", math.sqrt, Constant(1) / (Constant(2) * Function("sqrt"))),
+                              "sqrt": FunctionBase("sqrt", math.sqrt, Constant(1) / (Constant(2) * Function("sqrt")),
+                                                                      Constant(2) / Constant(3) * FunctionBase.VAR * Function("sqrt")),
                               }
 
 
+# f = Expression.from_string("{0}**2+{1}".format(*FunctionBase.VAR[:2]))
+# print(Expression.from_string("f(a*x+b, c*y+d)").derivative("x").simplify().integral("x").simplify())
+string = "sqrt(x)"
+print(Expression.from_string(string))
+print(Expression.from_string(string).integral("x").simplify())
+print(Expression.from_string(string).integral("x").simplify().derivative("x").simplify())
