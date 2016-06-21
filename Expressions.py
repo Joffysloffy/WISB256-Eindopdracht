@@ -775,31 +775,43 @@ class BinaryNode(OperatorNode):
         if isinstance(lhs, Constant) and isinstance(rhs, Constant):
             return Constant(eval("%s %s %s" % (lhs.value, self.op_symbol, rhs.value)))
 
-        # attempt to simplify consecutive operations using commutativity by cycling the operands
-        # e.g., if a*b*c does not simplify, try a*c*b and then a*(b*c)
-        if self.is_commutative:
-            # cycling in case of lhs
-            if type(self) == type(lhs):
-                operandslr = eval("lhs.lhs %s rhs" % self.op_symbol)
-                operandslr_simpl = operandslr.simplify()
-                if operandslr == operandslr_simpl:
-                    operandsrr = eval("lhs.rhs %s rhs" % self.op_symbol)
-                    operandsrr_simpl = operandsrr.simplify()
-                    if not operandsrr == operandsrr_simpl:
-                        return eval("lhs.lhs %s operandsrr_simpl" % self.op_symbol)
-                else:
-                    return eval("operandslr_simpl %s lhs.rhs" % self.op_symbol)
-            # cycling in case of rhs reduces to the case of lhs
-            if type(self) == type(rhs):
-                operandsll = eval("lhs %s rhs.lhs" % self.op_symbol)
-                operandsll_simpl = operandsll.simplify()
-                if operandsll == operandsll_simpl:
-                    operandslr = eval("lhs %s rhs.rhs" % self.op_symbol)
+        # attempt to simplify two consecutive same-precedence operators by reorganizing the expression tree
+        # e.g., if a*b/c does not simplify, try (a/c)*b and then a*(b/c)
+        if isinstance(lhs, BinaryNode):
+            if lhs.precedence == self.precedence:
+                if self.is_commutative:
+                    operandslr = eval("lhs.lhs %s rhs" % self.op_symbol)
                     operandslr_simpl = operandslr.simplify()
-                    if not operandslr == operandslr_simpl:
-                        return eval("operandslr_simpl %s rhs.lhs" % self.op_symbol)
+                    if operandslr == operandslr_simpl:
+                        operandsrr = eval("rhs %s lhs.rhs" % lhs.op_symbol)
+                        operandsrr_simpl = operandsrr.simplify()
+                        if not operandsrr == operandsrr_simpl:
+                            return eval("lhs.lhs %s operandsrr_simpl" % self.op_symbol).simplify()
+                    else:
+                        return eval("operandslr_simpl %s lhs.rhs" % lhs.op_symbol).simplify()
                 else:
-                    return eval("operandsll_simpl %s rhs.rhs" % self.op_symbol)
+                    operandslr = eval("lhs.lhs %s rhs" % self.op_symbol)
+                    operandslr_simpl = operandslr.simplify()
+                    if operandslr == operandslr_simpl:
+                        if lhs.is_commutative:
+                            operandsrr = eval("lhs.rhs %s rhs" % self.op_symbol)
+                            operandsrr_simpl = operandsrr.simplify()
+                            if not operandsrr == operandsrr_simpl:
+                                return eval("lhs.lhs %s operandsrr_simpl" % lhs.op_symbol).simplify()
+                    else:
+                        return eval("operandslr_simpl %s lhs.rhs" % lhs.op_symbol).simplify()
+        if isinstance(rhs, BinaryNode):
+            if rhs.precedence == self.precedence:
+                if self.is_commutative:
+                    operandsll = eval("lhs %s rhs.lhs" % self.op_symbol)
+                    operandsll_simpl = operandsll.simplify()
+                    if operandsll == operandsll_simpl:
+                        operandslr = eval("lhs %s rhs.rhs" % rhs.op_symbol)
+                        operandslr_simpl = operandslr.simplify()
+                        if not operandslr == operandslr_simpl:
+                            return eval("operandslr_simpl %s rhs.lhs" % self.op_symbol).simplify()
+                    else:
+                        return eval("operandsll_simpl %s rhs.rhs" % rhs.op_symbol).simplify()
 
         # if all else fails, return the operation between the (simplified) sides
         return eval("lhs %s rhs" % self.op_symbol)
@@ -1202,4 +1214,4 @@ Function.BUILTIN_FUNCTIONS = {"sin": FunctionBase("sin", math.sin, Function("cos
 expr = Expression.from_string("1+2*x+3*x**2+4*x**3")
 print(expr)
 print(expr.integral("x").simplify())
-print(Expression.from_string("3+x**4-3").simplify())
+print(Expression.from_string("x/3/3").simplify())
