@@ -1333,7 +1333,10 @@ Function.BUILTIN_FUNCTIONS = {"sin": FunctionBase("sin", math.sin, Function("cos
                               "ceil": FunctionBase("ceil", math.ceil),
                               "floor": FunctionBase("floor", math.floor),
                               "factorial": FunctionBase("factorial", math.factorial),
-                              "abs": FunctionBase("abs", math.fabs),
+                              "abs": FunctionBase("abs", math.fabs, Function("sgn"),
+                                                                    FunctionBase.VAR * Function("abs") / Constant(2)),
+                              "sgn": FunctionBase("sgn", lambda x: 0 if x == 0 else (1 if x > 0 else -1), Constant(0),
+                                                                                              Function("abs")),
                               "sqrt": FunctionBase("sqrt", math.sqrt, Constant(1) / (Constant(2) * Function("sqrt")),
                                                                       Constant(2) / Constant(3) * FunctionBase.VAR * Function("sqrt")),
                               }
