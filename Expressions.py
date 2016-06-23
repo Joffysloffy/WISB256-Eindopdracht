@@ -232,7 +232,7 @@ class Expression:
                     while not stack[-1] == "(":
                         output.append(stack.pop())
                 except IndexError as e:
-                    raise IndexError("misplaced function separator or mismatched parentheses") from e
+                    raise IndexError("misplaced function argument separator or mismatched parentheses") from e
             elif token in Expression.UNARY_OPERATOR_SYMBOLS:
                 # always pushed onto the stack
                 stack.append(token)
