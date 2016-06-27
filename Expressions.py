@@ -529,19 +529,21 @@ class Function(Expression):
             else:
                 f = val
                 variables = [str(FunctionBase.VAR[k]) for k in range(len(self.arguments))]
-            f_var_subst = dict(zip(variables, [a.substitute(substitutions_unknowns) for a in self.arguments]))
-            return f.substitute(f_var_subst)
+            f_var_subst = dict(zip(variables, [a.substitute(substitutions_unknowns, find_derivatives) for a in self.arguments]))
+            return f.substitute(f_var_subst, find_derivatives)
         except KeyError:
             if find_derivatives:
-                # attempt to find a provided function of which this one is some derivative
+                # attempt to find a provided function of which this one is some (anti)derivative
                 fn_name = self.base.symbol
-                var_index_stack = []
+                var_index_stack = []  # contains the indices of the components w.r.t. which the (anti)derivative was taken
+                der_int_stack = []  # contains whether its a derivative or integral ("_" or "^", respectively)
                 while fn_name not in substitutions_unknowns:
-                    i = fn_name.rfind("_")
+                    i = max(fn_name.rfind("_"), fn_name.rfind("^"))
                     if i > 0:
-                        # get the index of the variable with respect to which the derivative was taken (e.g., f_j -> j-1)
+                        # get the index of the variable with respect to which the (anti)derivative was taken (e.g., f_j -> j-1)
                         try:
                             var_index_stack.append(int(fn_name[i+1:]) - 1)
+                            der_int_stack.append(fn_name[i])
                         except ValueError:
                             break
                         # get the name of the original function (e.g., f_j -> f)
@@ -558,57 +560,30 @@ class Function(Expression):
                     else:
                         f = val
                         variables = [str(FunctionBase.VAR[k]) for k in range(len(self.arguments))]
-                    # repeatedly take the correct derivative to get back to the unknown derivative, where we started
-                    # also keep substituting in case there are nested functions of which we found newly unknown derivatives
+                    # repeatedly take the correct (anti)derivative to get back to the unknown (anti)derivative, where we started
+                    # also keep substituting in case there are nested functions of which we found newly unknown (anti)derivatives
                     while len(var_index_stack) > 0:
                         j = var_index_stack.pop()
+                        kind = der_int_stack.pop()
                         if isinstance(f, Function):
-                            if f.base.has_derivative(j):
-                                f = f.base.derivatives[j]
-                                continue
-                        f = f.derivative(variables[j]).substitute(substitutions_unknowns)
-                    f_var_subst = dict(zip(variables, [a.substitute(substitutions_unknowns) for a in self.arguments]))
-                    return f.substitute(f_var_subst)
-
-                # attempt to find a provided function of which this is some integral
-                fn_name = self.base.symbol
-                var_index_stack = []
-                while fn_name not in substitutions_unknowns:
-                    i = fn_name.rfind("^")
-                    if i > 0:
-                        # get the index of the variable with respect to which the integral was taken (e.g., f^j -> j-1)
-                        try:
-                            var_index_stack.append(int(fn_name[i+1:]) - 1)
-                        except ValueError:
-                            break
-                        # get the name of the original function (e.g., f^j -> f)
-                        fn_name = fn_name[:i]
-                    else:
-                        break
-                else:
-                    val = substitutions_unknowns[fn_name]
-                    if isinstance(val, tuple):
-                        (f, variables) = val
-                    elif isinstance(val, FunctionBase):
-                        f = Function(val, *self.arguments)
-                        variables = [str(k) for k in val.variables]
-                    else:
-                        f = val
-                        variables = [str(FunctionBase.VAR[k]) for k in range(len(self.arguments))]
-                    # repeatedly attempt to integrate to get back to the unknown integral, where we started
-                    # also keep substituting in case there are nested functions of which we found newly unknown integrals
-                    while len(var_index_stack) > 0:
-                        j = var_index_stack.pop()
-                        if isinstance(f, Function):
-                            if f.base.has_integral(j):
-                                f = f.base.integrals[j]
-                                continue
-                        f = f.integral(variables[j]).substitute(substitutions_unknowns)
-                    f_var_subst = dict(zip(variables, [a.substitute(substitutions_unknowns) for a in self.arguments]))
-                    return f.substitute(f_var_subst)
+                            if kind == "_":
+                                if f.base.has_derivative(j):
+                                    f = f.base.derivatives[j]
+                                    continue
+                            if kind == "^":
+                                if f.base.has_integral(j):
+                                    f = f.base.integrals[j]
+                                    continue
+                        else:
+                            if kind == "_":
+                                f = f.derivative(variables[j]).substitute(substitutions_unknowns, find_derivatives)
+                            if kind == "^":
+                                f = f.integral(variables[j]).substitute(substitutions_unknowns, find_derivatives)
+                    f_var_subst = dict(zip(variables, [a.substitute(substitutions_unknowns, find_derivatives) for a in self.arguments]))
+                    return f.substitute(f_var_subst, find_derivatives)
 
         # the function itself was not to be substituted, so pass the substitution on to its arguments
-        return Function(self.base, *[a.substitute(substitutions_unknowns) for a in self.arguments])
+        return Function(self.base, *[a.substitute(substitutions_unknowns, find_derivatives) for a in self.arguments])
 
     def derivative(self, variable):
         if isinstance(variable, str):
@@ -804,7 +779,7 @@ class UnaryNode(OperatorNode):
         return eval("%svalue" % self.op_symbol)
 
     def substitute(self, substitutions_unknowns, find_derivatives=True):
-        value = self.operand.substitute(substitutions_unknowns)
+        value = self.operand.substitute(substitutions_unknowns, find_derivatives)
         return eval("%svalue" % self.op_symbol)
 
     def simplify(self, operand=None):
@@ -905,8 +880,8 @@ class BinaryNode(OperatorNode):
         return eval("(lvalue) %s (rvalue)" % self.op_symbol)
 
     def substitute(self, substitutions_unknowns, find_derivatives=True):
-        lvalue = self.lhs.substitute(substitutions_unknowns)
-        rvalue = self.rhs.substitute(substitutions_unknowns)
+        lvalue = self.lhs.substitute(substitutions_unknowns, find_derivatives)
+        rvalue = self.rhs.substitute(substitutions_unknowns, find_derivatives)
         return eval("lvalue %s rvalue" % self.op_symbol)
 
     def derivative(self, variable):
@@ -1392,4 +1367,6 @@ Function.BUILTIN_FUNCTIONS = {"sin": FunctionBase("sin", math.sin, Function("cos
                               "sqrt": FunctionBase("sqrt", math.sqrt, Constant(1) / (Constant(2) * Function("sqrt")),
                                                                       Constant(2) / Constant(3) * FunctionBase.VAR * Function("sqrt")),
                               }
+
+
 
