@@ -135,6 +135,7 @@ class Expression:
     # keys of functions are strings with values either:
     #     a tuple with first an Expression and then a list of variables used
     #     just an Expression, provided it use FunctionBase.VAR as its variables
+    #     just a FunctionBase if the function itself need not to be substituted, but its derivatives should
     def substitute(self, substitutions_unknowns, find_derivatives=True):
         return self
 
@@ -456,7 +457,7 @@ class FunctionBase:
         elif not isinstance(variables, list):
             self.variables = [variables]
         else:
-            self.variables = list(variables)  # the variables to be substituted in self.derivative, in order
+            self.variables = list(variables)  # the variables to be substituted in self.derivatives and self.integrals, in order
 
     def has_derivative(self, index=0):
         try:
@@ -522,6 +523,9 @@ class Function(Expression):
             val = substitutions_unknowns[self.base.symbol]
             if isinstance(val, tuple):
                 (f, variables) = val
+            elif isinstance(val, FunctionBase):
+                f = Function(val, *self.arguments)
+                variables = [str(k) for k in val.variables]
             else:
                 f = val
                 variables = [str(FunctionBase.VAR[k]) for k in range(len(self.arguments))]
@@ -548,6 +552,9 @@ class Function(Expression):
                     val = substitutions_unknowns[fn_name]
                     if isinstance(val, tuple):
                         (f, variables) = val
+                    elif isinstance(val, FunctionBase):
+                        f = Function(val, *self.arguments)
+                        variables = [str(k) for k in val.variables]
                     else:
                         f = val
                         variables = [str(FunctionBase.VAR[k]) for k in range(len(self.arguments))]
@@ -577,6 +584,9 @@ class Function(Expression):
                     val = substitutions_unknowns[fn_name]
                     if isinstance(val, tuple):
                         (f, variables) = val
+                    elif isinstance(val, FunctionBase):
+                        f = Function(val, *self.arguments)
+                        variables = [str(k) for k in val.variables]
                     else:
                         f = val
                         variables = [str(FunctionBase.VAR[k]) for k in range(len(self.arguments))]
