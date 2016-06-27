@@ -561,7 +561,12 @@ class Function(Expression):
                     # repeatedly take the correct derivative to get back to the unknown derivative, where we started
                     # also keep substituting in case there are nested functions of which we found newly unknown derivatives
                     while len(var_index_stack) > 0:
-                        f = f.derivative(variables[var_index_stack.pop()]).substitute(substitutions_unknowns)
+                        j = var_index_stack.pop()
+                        if isinstance(f, Function):
+                            if f.base.has_derivative(j):
+                                f = f.base.derivatives[j]
+                                continue
+                        f = f.derivative(variables[j]).substitute(substitutions_unknowns)
                     f_var_subst = dict(zip(variables, [a.substitute(substitutions_unknowns) for a in self.arguments]))
                     return f.substitute(f_var_subst)
 
@@ -593,7 +598,12 @@ class Function(Expression):
                     # repeatedly attempt to integrate to get back to the unknown integral, where we started
                     # also keep substituting in case there are nested functions of which we found newly unknown integrals
                     while len(var_index_stack) > 0:
-                        f = f.integral(variables[var_index_stack.pop()]).substitute(substitutions_unknowns)
+                        j = var_index_stack.pop()
+                        if isinstance(f, Function):
+                            if f.base.has_integral(j):
+                                f = f.base.integrals[j]
+                                continue
+                        f = f.integral(variables[j]).substitute(substitutions_unknowns)
                     f_var_subst = dict(zip(variables, [a.substitute(substitutions_unknowns) for a in self.arguments]))
                     return f.substitute(f_var_subst)
 
@@ -603,7 +613,6 @@ class Function(Expression):
     def derivative(self, variable):
         if isinstance(variable, str):
             variable = Variable(variable)
-
         # find the derivative w.r.t. each variable and create a dummy function if it does not exist
         diffs = []  # derivatives w.r.t. the variable of each component
         subst_vars_str = []  # the variables for which the arguments are substituted
