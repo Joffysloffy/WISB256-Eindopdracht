@@ -126,7 +126,7 @@ class Expression:
 
     # evaluate the expression with values for variables and functions with a dictionary
     # keys are variables as strings with concrete values
-    # keys are function names as strings with FunctionBase as values
+    # keys are function names as strings with as values either a Python function or FunctionBase
     def evaluate(self, substitutions_unknowns={}):
         raise NotImplementedError("evaluation for the following expression was not possible: %s" % self)
 
@@ -505,12 +505,15 @@ class Function(Expression):
 
     def evaluate(self, substitutions_unknowns={}):
         try:
-            f = substitutions_unknowns[self.base.symbol].executable
+            f = substitutions_unknowns[self.base.symbol]
         except KeyError:
             try:
-                f = Function.BUILTIN_FUNCTIONS[self.base.symbol].executable
+                f = Function.BUILTIN_FUNCTIONS[self.base.symbol]
             except KeyError as e:
                 raise KeyError("function '%s' was unspecified" % self.base.symbol) from e
+        if isinstance(f, FunctionBase):
+            # allow for using FunctionBase instances in substitutions_unknowns
+            f = f.executable
         return f(*[a.evaluate(substitutions_unknowns) for a in self.arguments])
 
     def substitute(self, substitutions_unknowns, find_derivatives=True):
@@ -1370,5 +1373,4 @@ Function.BUILTIN_FUNCTIONS = {"sin": FunctionBase("sin", math.sin, Function("cos
                               "sqrt": FunctionBase("sqrt", math.sqrt, Constant(1) / (Constant(2) * Function("sqrt")),
                                                                       Constant(2) / Constant(3) * FunctionBase.VAR * Function("sqrt")),
                               }
-
 
