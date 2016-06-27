@@ -574,13 +574,12 @@ class Function(Expression):
                                 if f.base.has_integral(j):
                                     f = f.base.integrals[j]
                                     continue
-                        else:
-                            if kind == "_":
-                                f = f.derivative(variables[j]).substitute(substitutions_unknowns, find_derivatives)
-                            if kind == "^":
-                                f = f.integral(variables[j]).substitute(substitutions_unknowns, find_derivatives)
+                        if kind == "_":
+                            f = f.derivative(variables[j]).substitute(substitutions_unknowns, find_derivatives)
+                        if kind == "^":
+                            f = f.integral(variables[j]).substitute(substitutions_unknowns, find_derivatives)
                     f_var_subst = dict(zip(variables, [a.substitute(substitutions_unknowns, find_derivatives) for a in self.arguments]))
-                    return f.substitute(f_var_subst, find_derivatives)
+                    return f.substitute(f_var_subst, False)
 
         # the function itself was not to be substituted, so pass the substitution on to its arguments
         return Function(self.base, *[a.substitute(substitutions_unknowns, find_derivatives) for a in self.arguments])
@@ -667,8 +666,12 @@ class Function(Expression):
     def simplify(self):
         arguments = [a.simplify() for a in self.arguments]
 
-        # log(b, b) = 1
         if self.base.symbol == "log":
+            # log(1, b) = 0
+            if arguments[0] == Constant(1):
+                return Constant(0)
+
+            # log(b, b) = 1
             if (len(arguments) == 1 and arguments[0] == Variable("e")) or\
                (len(arguments) > 1 and arguments[0] == arguments[1]):
                 return Constant(1)
@@ -844,9 +847,6 @@ class BinaryNode(OperatorNode):
         self.lhs = lhs
         self.rhs = rhs
         self.is_commutative = is_commutative
-
-        if isinstance(self.lhs, int) or isinstance(self.rhs, int):
-            print("one side int:", self)
 
     def __eq__(self, other):
         if type(self) == type(other):
@@ -1367,6 +1367,4 @@ Function.BUILTIN_FUNCTIONS = {"sin": FunctionBase("sin", math.sin, Function("cos
                               "sqrt": FunctionBase("sqrt", math.sqrt, Constant(1) / (Constant(2) * Function("sqrt")),
                                                                       Constant(2) / Constant(3) * FunctionBase.VAR * Function("sqrt")),
                               }
-
-
 
