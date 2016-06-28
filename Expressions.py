@@ -655,7 +655,7 @@ class Function(Expression):
                         integral = Function("%s^%d" % (self.base.symbol, index+1), *self.arguments)
                         is_dummy = True
 
-                # substitute the variables and multiply with the derivative of the argument containing variable
+                # substitute the variables and divide by the derivative of the argument containing variable
                 if is_dummy:
                     return integral / arg.derivative(variable)
                 else:
@@ -1174,8 +1174,8 @@ class DivisionNode(BinaryNode):
             return self.lhs.integral(variable) * self.rhs
 
         if variable not in self.lhs:
-            if self.rhs == variable:
-                return self.lhs * Function("log", Function("abs", variable))
+            if Expression.is_linear(self.rhs, variable):
+                return self.lhs * Function("log", Function("abs", self.rhs)) / self.rhs.derivative(variable)
 
             if isinstance(self.rhs, PowerNode):
                 return self.lhs * (self.rhs.lhs ** -self.rhs.rhs).integral(variable)
