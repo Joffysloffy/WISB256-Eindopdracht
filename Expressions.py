@@ -1171,7 +1171,7 @@ class DivisionNode(BinaryNode):
             variable = Variable(variable)
 
         if variable not in self.rhs:
-            return self.lhs.integral(variable) * self.rhs
+            return self.lhs.integral(variable) / self.rhs
 
         if variable not in self.lhs:
             if Expression.is_linear(self.rhs, variable):
