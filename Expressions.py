@@ -453,7 +453,7 @@ class FunctionBase:
 
         # of type Variable
         if variables is None:
-            self.variables = FunctionBase.VAR[0:len(self.derivatives)]
+            self.variables = FunctionBase.VAR[0:max(len(self.derivatives), len(self.integrals))]
         elif not isinstance(variables, list):
             self.variables = [variables]
         else:
@@ -1384,3 +1384,4 @@ Function.BUILTIN_FUNCTIONS = {"sin": FunctionBase("sin", math.sin, Function("cos
                               "sqrt": FunctionBase("sqrt", math.sqrt, Constant(1) / (Constant(2) * Function("sqrt")),
                                                                       Constant(2) / Constant(3) * FunctionBase.VAR * Function("sqrt")),
                               }
+
