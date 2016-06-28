@@ -314,6 +314,10 @@ class Expression:
 class Constant(Expression):
     """Represents a constant value"""
 
+    BUILTIN_CONSTANTS = {"pi": math.pi,
+                         "π": math.pi,
+                         "e": math.e}
+
     def __init__(self, value):
         self.value = value
 
@@ -353,10 +357,6 @@ class Constant(Expression):
 class Variable(Expression):
     """Represents a variable that may later be substituted for a value"""
 
-    BUILTIN_CONSTANTS = {"pi": math.pi,
-                         "π": math.pi,
-                         "e": math.e}
-
     def __init__(self, symbol):
         self.symbol = symbol
 
@@ -374,7 +374,7 @@ class Variable(Expression):
             return substitutions_unknowns[self.symbol]
         except KeyError:
             try:
-                return Variable.BUILTIN_CONSTANTS[self.symbol]
+                return Constant.BUILTIN_CONSTANTS[self.symbol]
             except KeyError as e:
                 raise KeyError("variable '%s' was unspecified" % self.symbol) from e
 
@@ -702,6 +702,23 @@ class Function(Expression):
             if isinstance(arguments[0], Function):
                 if self.base.symbol[1:] == arguments[0].base.symbol:
                     return arguments[0].arguments[0].simplify()
+
+        # cancel abs and negation
+        if self.base.symbol == "abs":
+            if isinstance(arguments[0], NegationNode):
+                return arguments[0].operand
+            # after simplifying all Constants are non-negative
+            if isinstance(arguments[0], Constant):
+                return arguments[0]
+
+        # evaluate sgn if possible
+        if self.base.symbol == "sgn":
+            # after simplifying all Constants are non-negative
+            if isinstance(arguments[0], Constant):
+                return Constant(self.base.executable(arguments[0].value))
+            if isinstance(arguments[0], NegationNode):
+                if isinstance(arguments[0].operand, Constant):
+                    return Constant(self.base.executable(-arguments[0].operand.value))
 
         # cancel derivatives against integrals and vice versa (e.g., f_1^1 -> f)
         # convert the function name to a list
