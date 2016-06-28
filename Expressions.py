@@ -163,7 +163,7 @@ class Expression:
 
     # returns a callable Python function
     # variables should be a list of strings of variable names that appear in the desired order of the parameters of the to be generated function
-    def Python_function(self, variables):
+    def Python_function(self, *variables):
         raise NotImplementedError("the following expression could not be converted to a Python function: %s" % self)
 
     def __contains__(self, item):
@@ -340,7 +340,7 @@ class Constant(Expression):
         else:
             return self
 
-    def Python_function(self, variables):
+    def Python_function(self, *variables):
         return lambda *args: self.value
 
     def __contains__(self, item):
@@ -402,7 +402,7 @@ class Variable(Expression):
         else:
             return self * variable
 
-    def Python_function(self, variables):
+    def Python_function(self, *variables):
         try:
             i = variables.index(self.symbol)
             return lambda *args: args[i]
@@ -749,8 +749,8 @@ class Function(Expression):
 
         return Function(base, *arguments)
 
-    def Python_function(self, variables):
-        return lambda *args: self.base.executable(*[a.Python_function(variables)(*args) for a in self.arguments])
+    def Python_function(self, *variables):
+        return lambda *args: self.base.executable(*[a.Python_function(*variables)(*args) for a in self.arguments])
 
     def __contains__(self, item):
         if item == self:
@@ -807,8 +807,8 @@ class UnaryNode(OperatorNode):
             operand = self.operand.simplify()
         return eval("%soperand" % self.op_symbol)
 
-    def Python_function(self, variables):
-        opPython = self.operand.Python_function(variables)
+    def Python_function(self, *variables):
+        opPython = self.operand.Python_function(*variables)
         return lambda *args: eval("%sopPython(*args)" % self.op_symbol, globals(), {"opPython": opPython, "args": args})
 
     def __contains__(self, item):
@@ -852,8 +852,8 @@ class NegationNode(UnaryNode):
 
         return super().simplify(operand)
 
-    def Python_function(self, variables):
-        return lambda *args: -self.operand.Python_function(variables)(*args)
+    def Python_function(self, *variables):
+        return lambda *args: -self.operand.Python_function(*variables)(*args)
 
 
 class BinaryNode(OperatorNode):
@@ -992,9 +992,9 @@ class BinaryNode(OperatorNode):
             elif rhs.rhs == lhs and right:
                 return node_higher(node_lower(Constant(1), rhs.lhs), lhs).simplify()
 
-    def Python_function(self, variables):
-        lPython = self.lhs.Python_function(variables)
-        rPython = self.rhs.Python_function(variables)
+    def Python_function(self, *variables):
+        lPython = self.lhs.Python_function(*variables)
+        rPython = self.rhs.Python_function(*variables)
         return lambda *args: eval("lPython(*args) %s rPython(*args)" % self.op_symbol, globals(), {"lPython": lPython, "rPython": rPython, "args": args})
 
     def __contains__(self, item):
@@ -1384,4 +1384,3 @@ Function.BUILTIN_FUNCTIONS = {"sin": FunctionBase("sin", math.sin, Function("cos
                               "sqrt": FunctionBase("sqrt", math.sqrt, Constant(1) / (Constant(2) * Function("sqrt")),
                                                                       Constant(2) / Constant(3) * FunctionBase.VAR * Function("sqrt")),
                               }
-
