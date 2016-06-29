@@ -955,7 +955,6 @@ class BinaryNode(OperatorNode):
                         return eval("operandsll_simpl %s rhs.rhs" % rhs.op_symbol).simplify()
 
         # if all else fails, return the operation between the (simplified) sides
-
         return eval("lhs %s rhs" % self.op_symbol)
 
     @staticmethod
@@ -1384,4 +1383,3 @@ Function.BUILTIN_FUNCTIONS = {"sin": FunctionBase("sin", math.sin, Function("cos
                               "sqrt": FunctionBase("sqrt", math.sqrt, Constant(1) / (Constant(2) * Function("sqrt")),
                                                                       Constant(2) / Constant(3) * FunctionBase.VAR * Function("sqrt")),
                               }
-
